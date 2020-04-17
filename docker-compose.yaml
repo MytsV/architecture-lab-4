@@ -3,5 +3,8 @@ version: '2.1'
 services:
   server1:
     build: .
+#    environment:
+#      CONF_HEALTH_FAILURE: "true"
+#      CONF_RESPONSE_DELAY_SEC: "5"
     ports:
       - "80:8080"

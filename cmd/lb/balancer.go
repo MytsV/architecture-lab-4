@@ -15,13 +15,14 @@ import (
 
 var port = flag.Int("port", 8090, "load balancer port")
 var timeoutSec = flag.Int("timeout-sec", 3, "request timeout time in seconds")
-var https = flag.Bool("https", false, "whether backends support HTTPs")
+var https = flag.Bool("https", true, "whether backends support HTTPs")
 
 var timeout = time.Duration(*timeoutSec) * time.Second
 
 var serversPool = []string{
-	"localhost:8080",
-	"localhost:8081",
+	"0aca0fe0cc022516765fe2ce333adb41.balena-devices.com",
+	"a7cf5dab491f1583c1962834611eeffc.balena-devices.com",
+	"d55cdee2e7aae94f46b438ee405983aa.balena-devices.com",
 }
 
 func scheme() string {
