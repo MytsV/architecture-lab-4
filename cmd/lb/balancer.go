@@ -52,6 +52,7 @@ func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
 	fwdRequest.RequestURI = ""
 	fwdRequest.URL.Host = dst
 	fwdRequest.URL.Scheme = scheme()
+	fwdRequest.Host = dst
 
 	resp, err := http.DefaultClient.Do(fwdRequest)
 	if err == nil {
@@ -61,6 +62,7 @@ func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		// TODO: set team and counter headers.
+		log.Println("fwd", resp.StatusCode, resp.Request.URL)
 		rw.WriteHeader(resp.StatusCode)
 		defer resp.Body.Close()
 		_, err := io.Copy(rw, resp.Body)
