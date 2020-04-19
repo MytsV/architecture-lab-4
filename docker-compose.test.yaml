@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.test
+    networks:
+      - servers
     depends_on:
       - server1
       - server2
@@ -12,5 +14,5 @@ services:
       - balancer
 
   balancer:
-    # Для тестів: включаємо режим відлагодження, коли балансувальник додає інформацію, кому було відправлено запит.
-    command: ["lb", "-trace"]
+    # Для тестів включаємо режим відлагодження, коли балансувальник додає інформацію, кому було відправлено запит.
+    command: ["lb", "--trace=true"]

@@ -15,10 +15,11 @@ var client = http.Client{
 
 func TestBalancer(t *testing.T) {
 	// TODO: Реалізуйте інтеграційний тест для балансувальникка.
-	_, err := client.Get(fmt.Sprintf("%s/api/v1/some-data", baseAddress))
+	resp, err := client.Get(fmt.Sprintf("%s/api/v1/some-data", baseAddress))
 	if err != nil {
 		t.Error(err)
 	}
+	t.Logf("response from [%s]", resp.Header.Get("lb-from"))
 }
 
 func BenchmarkBalancer(b *testing.B) {

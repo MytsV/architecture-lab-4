@@ -85,6 +85,8 @@ func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
 }
 
 func main() {
+	flag.Parse()
+
 	// TODO: Використовуйте дані про стан сервреа, щоб підтримувати список тих серверів, яким можна відправляти ззапит.
 	for _, server := range serversPool {
 		server := server
@@ -101,6 +103,7 @@ func main() {
 	}))
 
 	log.Println("Starting load balancer...")
+	log.Printf("Tracing support enabled: %t", *traceEnabled)
 	frontend.Start()
 	signal.WaitForTerminationSignal()
 }
