@@ -13,17 +13,22 @@ import (
 	"github.com/roman-mazur/design-practice-3-template/signal"
 )
 
-var port = flag.Int("port", 8090, "load balancer port")
-var timeoutSec = flag.Int("timeout-sec", 3, "request timeout time in seconds")
-var https = flag.Bool("https", true, "whether backends support HTTPs")
+var (
+	port = flag.Int("port", 8090, "load balancer port")
+	timeoutSec = flag.Int("timeout-sec", 3, "request timeout time in seconds")
+	https = flag.Bool("https", false, "whether backends support HTTPs")
 
-var timeout = time.Duration(*timeoutSec) * time.Second
+	traceEnabled = flag.Bool("trace", false, "whether to include tracing information into responses")
+)
 
-var serversPool = []string{
-	"0aca0fe0cc022516765fe2ce333adb41.balena-devices.com",
-	"a7cf5dab491f1583c1962834611eeffc.balena-devices.com",
-	"d55cdee2e7aae94f46b438ee405983aa.balena-devices.com",
-}
+var (
+	timeout = time.Duration(*timeoutSec) * time.Second
+	serversPool = []string{
+		"server1:8080",
+		"server2:8080",
+		"server3:8080",
+	}
+)
 
 func scheme() string {
 	if *https {
@@ -61,7 +66,9 @@ func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
 				rw.Header().Add(k, value)
 			}
 		}
-		// TODO: set team and counter headers.
+		if *traceEnabled {
+			rw.Header().Set("lb-from", dst)
+		}
 		log.Println("fwd", resp.StatusCode, resp.Request.URL)
 		rw.WriteHeader(resp.StatusCode)
 		defer resp.Body.Close()
@@ -78,6 +85,7 @@ func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
 }
 
 func main() {
+	// TODO: Використовуйте дані про стан сервреа, щоб підтримувати список тих серверів, яким можна відправляти ззапит.
 	for _, server := range serversPool {
 		server := server
 		go func() {
@@ -88,9 +96,11 @@ func main() {
 	}
 
 	frontend := httptools.CreateServer(*port, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		// TODO: Рееалізуйте свій алгоритм балансувальника.
 		forward(serversPool[0], rw, r)
 	}))
 
+	log.Println("Starting load balancer...")
 	frontend.Start()
 	signal.WaitForTerminationSignal()
 }
