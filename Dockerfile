@@ -1,19 +1,17 @@
-FROM golang:1.15 as build
+FROM golang:1.20 as build
 
-RUN apt-get update && apt-get install -y ninja-build
-
-# TODO: Змініть на власну реалізацію системи збірки
-RUN go get -u github.com/roman-mazur/bood/cmd/bood
-
-WORKDIR /go/src/practice-2
+WORKDIR /go/src/practice-4
 COPY . .
 
-RUN CGO_ENABLED=0 bood
+RUN go test ./...
+ENV CGO_ENABLED=0
+RUN go install ./cmd/...
 
 # ==== Final image ====
-FROM alpine:3.11
-WORKDIR /opt/practice-2
-COPY entry.sh ./
-COPY --from=build /go/src/practice-2/out/bin/* ./
-ENTRYPOINT ["/opt/practice-2/entry.sh"]
+FROM alpine:latest
+WORKDIR /opt/practice-4
+COPY entry.sh /opt/practice-4/
+COPY --from=build /go/bin/* /opt/practice-4
+RUN ls /opt/practice-4
+ENTRYPOINT ["/opt/practice-4/entry.sh"]
 CMD ["server"]

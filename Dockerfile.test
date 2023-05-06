@@ -1,13 +1,7 @@
-FROM golang:1.15 as build
+FROM golang:1.20 as build
 
-RUN apt-get update && apt-get install -y ninja-build
-
-# TODO: Змініть на власну реалізацію системи збірки
-RUN go get -u github.com/roman-mazur/bood/cmd/bood
-
-WORKDIR /go/src/practice-2
+WORKDIR /go/src/practice-4
 COPY . .
 
-# TODO: Замініть на запуск bood, який призводить до виконання інтеграційних тестів.
-# ENTRYPOINT ["bood", "integration-tests"]
-ENTRYPOINT ["echo", "ok"]
+ENV INTEGRATION_TEST=1
+RUN go test ./integration

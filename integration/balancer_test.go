@@ -3,6 +3,7 @@ package integration
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 )
@@ -14,6 +15,10 @@ var client = http.Client{
 }
 
 func TestBalancer(t *testing.T) {
+	if _, exists := os.LookupEnv("INTEGRATION_TEST"); !exists {
+		t.Skip("Integration test is not enabled")
+	}
+
 	// TODO: Реалізуйте інтеграційний тест для балансувальникка.
 	resp, err := client.Get(fmt.Sprintf("%s/api/v1/some-data", baseAddress))
 	if err != nil {
