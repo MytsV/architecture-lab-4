@@ -22,15 +22,51 @@ var (
 	traceEnabled = flag.Bool("trace", false, "whether to include tracing information into responses")
 )
 
-// Public?
-type server struct {
+type Server struct {
 	Url           string
 	ConnectionCnt int
 }
 
+func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
+	s.ConnectionCnt++
+	defer func() {
+		s.ConnectionCnt--
+	}()
+	ctx, _ := context.WithTimeout(r.Context(), timeout)
+	fwdRequest := r.Clone(ctx)
+	fwdRequest.RequestURI = ""
+	fwdRequest.URL.Host = s.Url
+	fwdRequest.URL.Scheme = scheme()
+	fwdRequest.Host = s.Url
+
+	resp, err := http.DefaultClient.Do(fwdRequest)
+	if err == nil {
+		for k, values := range resp.Header {
+			for _, value := range values {
+				rw.Header().Add(k, value)
+			}
+		}
+		if *traceEnabled {
+			rw.Header().Set("lb-from", s.Url)
+		}
+		log.Println("fwd", resp.StatusCode, resp.Request.URL)
+		rw.WriteHeader(resp.StatusCode)
+		defer resp.Body.Close()
+		_, err := io.Copy(rw, resp.Body)
+		if err != nil {
+			log.Printf("Failed to write response: %s", err)
+		}
+		return nil
+	} else {
+		log.Printf("Failed to get response from %s: %s", s.Url, err)
+		rw.WriteHeader(http.StatusServiceUnavailable)
+		return err
+	}
+}
+
 var (
 	timeout     = time.Duration(*timeoutSec) * time.Second
-	serversPool = []server{
+	serversPool = []Server{
 		{Url: "server1:8080"},
 		{Url: "server2:8080"},
 		{Url: "server3:8080"},
@@ -58,42 +94,8 @@ func health(dst string) bool {
 	return true
 }
 
-// Method on Server?
-func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
-	ctx, _ := context.WithTimeout(r.Context(), timeout)
-	fwdRequest := r.Clone(ctx)
-	fwdRequest.RequestURI = ""
-	fwdRequest.URL.Host = dst
-	fwdRequest.URL.Scheme = scheme()
-	fwdRequest.Host = dst
-
-	resp, err := http.DefaultClient.Do(fwdRequest)
-	if err == nil {
-		for k, values := range resp.Header {
-			for _, value := range values {
-				rw.Header().Add(k, value)
-			}
-		}
-		if *traceEnabled {
-			rw.Header().Set("lb-from", dst)
-		}
-		log.Println("fwd", resp.StatusCode, resp.Request.URL)
-		rw.WriteHeader(resp.StatusCode)
-		defer resp.Body.Close()
-		_, err := io.Copy(rw, resp.Body)
-		if err != nil {
-			log.Printf("Failed to write response: %s", err)
-		}
-		return nil
-	} else {
-		log.Printf("Failed to get response from %s: %s", dst, err)
-		rw.WriteHeader(http.StatusServiceUnavailable)
-		return err
-	}
-}
-
 // Pass only healthy ones?
-func Balance(pool []server) int {
+func Balance(pool []Server) int {
 	min := 0
 	for i := 1; i < len(pool); i++ {
 		if pool[i].ConnectionCnt < pool[min].ConnectionCnt {
@@ -118,10 +120,7 @@ func main() {
 
 	frontend := httptools.CreateServer(*port, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		i := Balance(serversPool)
-		//Lock?
-		serversPool[i].ConnectionCnt++
-		forward(serversPool[i].Url, rw, r)
-		serversPool[i].ConnectionCnt--
+		serversPool[i].Forward(rw, r)
 	}))
 
 	log.Println("Starting load balancer...")
