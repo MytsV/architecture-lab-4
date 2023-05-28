@@ -18,15 +18,14 @@ import (
 var (
 	port = flag.Int("port", 8090, "load balancer port")
 	// For easier testing it is set to 10 locally via a flag
-	timeoutSec   = flag.Int("timeout-sec", 10, "request timeout time in seconds")
+	timeoutSec   = flag.Int("timeout-sec", 3, "request timeout time in seconds")
 	https        = flag.Bool("https", false, "whether backends support HTTPs")
 	traceEnabled = flag.Bool("trace", false, "whether to include tracing information into responses")
-	timeout      = time.Duration(*timeoutSec) * time.Second
 	// Pass server pool as a parameter for easy local run (in order to check for data races, for example)
 	serverUrls = flag.String(
 		"servers",
 		"server1:8080,server2:8080,server3:8080",
-		"comma separated list of server URLs; ~ before URL if server begins as unhealthy",
+		"comma separated list of server URLs",
 	)
 )
 
@@ -35,6 +34,10 @@ func scheme() string {
 		return "https"
 	}
 	return "http"
+}
+
+func getTimeout() time.Duration {
+	return time.Duration(*timeoutSec) * time.Second
 }
 
 // Server structure represents a server and its state
@@ -86,7 +89,7 @@ func (c *SyncBool) Get() bool {
 // Forward processes a request with a server of choice
 func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
 	s.ConnectionCnt.Change(1)
-	ctx, _ := context.WithTimeout(r.Context(), timeout)
+	ctx, _ := context.WithTimeout(r.Context(), getTimeout())
 	fwdRequest := r.Clone(ctx)
 	fwdRequest.RequestURI = ""
 	fwdRequest.URL.Host = s.Url
@@ -115,6 +118,7 @@ func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
 		return nil
 	} else {
 		log.Printf("Failed to get response from %s: %s", s.Url, err)
+		s.IsHealthy.Set(false)
 		rw.WriteHeader(http.StatusServiceUnavailable)
 		return err
 	}
@@ -122,24 +126,25 @@ func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
 
 // Check health processes server state and changes IsHealthy parameter
 func (s *Server) CheckHealth() {
-	ctx, _ := context.WithTimeout(context.Background(), timeout)
+	ctx, _ := context.WithTimeout(context.Background(), getTimeout())
 	req, _ := http.NewRequestWithContext(ctx, "GET",
 		fmt.Sprintf("%s://%s/health", scheme(), s.Url), nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		s.IsHealthy.Set(false)
+	} else {
+		s.IsHealthy.Set(true)
 	}
-	s.IsHealthy.Set(true)
 }
 
 // Balancer contains Server list and decides which one to forward a request to
 type Balancer struct {
-	serversPool []Server
+	ServersPool []Server
 }
 
 // balance returns a pointer to a healthy Server with the least connections
 func (b *Balancer) balance() *Server {
-	pool := b.serversPool
+	pool := b.ServersPool
 
 	var min *Server = nil
 	for i := 0; i < len(pool); i++ {
@@ -155,15 +160,15 @@ func (b *Balancer) balance() *Server {
 }
 
 // StartHealthyService begins to check and update Server health every 10 seconds
-// Wait for first health check before balancing?
 func (b *Balancer) StartHealthService() {
-	for i, _ := range b.serversPool {
+	for i, _ := range b.ServersPool {
+		b.ServersPool[i].CheckHealth()
 		// Run checks concurrently
 		go func(s *Server) {
 			for range time.Tick(10 * time.Second) {
 				s.CheckHealth()
 			}
-		}(&b.serversPool[i])
+		}(&b.ServersPool[i])
 	}
 }
 
@@ -182,19 +187,12 @@ func main() {
 	urlList := strings.Split(*serverUrls, ",")
 	serversPool := []Server{}
 	for _, url := range urlList {
-		if strings.HasPrefix(url, "~") {
-			serversPool = append(serversPool, Server{
-				Url: url[1:len(url)], IsHealthy: SyncBool{v: false},
-			})
-		} else {
-			serversPool = append(serversPool, Server{
-				Url: url, IsHealthy: SyncBool{v: true},
-			})
-		}
+		serversPool = append(serversPool, Server{Url: url})
 	}
 
 	balancer := Balancer{serversPool}
 
+	//Wait for first health check before starting balancer
 	balancer.StartHealthService()
 	frontend := httptools.CreateServer(*port, http.HandlerFunc(balancer.Handle))
 
