@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,10 +18,16 @@ import (
 var (
 	port = flag.Int("port", 8090, "load balancer port")
 	// For easier testing it is set to 10 locally via a flag
-	timeoutSec   = flag.Int("timeout-sec", 3, "request timeout time in seconds")
+	timeoutSec   = flag.Int("timeout-sec", 10, "request timeout time in seconds")
 	https        = flag.Bool("https", false, "whether backends support HTTPs")
 	traceEnabled = flag.Bool("trace", false, "whether to include tracing information into responses")
 	timeout      = time.Duration(*timeoutSec) * time.Second
+	// Pass server pool as a parameter for easy local run (in order to check for data races, for example)
+	serverUrls = flag.String(
+		"servers",
+		"server1:8080,server2:8080,server3:8080",
+		"comma separated list of server URLs; ~ before URL if server begins as unhealthy",
+	)
 )
 
 func scheme() string {
@@ -131,6 +138,7 @@ func (b *Balancer) balance() *Server {
 }
 
 // StartHealthyService begins to check and update Server health every 10 seconds
+// Wait for first health check before balancing?
 func (b *Balancer) StartHealthService() {
 	for i, _ := range b.serversPool {
 		// Run checks concurrently
@@ -154,20 +162,28 @@ func (b *Balancer) Handle(rw http.ResponseWriter, r *http.Request) {
 
 func main() {
 	flag.Parse()
-
-	balancer := Balancer{
-		[]Server{
-			{Url: "server1:8080", IsHealthy: true},
-			{Url: "server2:8080", IsHealthy: false},
-			{Url: "server3:8080", IsHealthy: false},
-		},
+	urlList := strings.Split(*serverUrls, ",")
+	serversPool := []Server{}
+	for _, url := range urlList {
+		if strings.HasPrefix(url, "~") {
+			serversPool = append(serversPool, Server{
+				Url: url[1:len(url)], IsHealthy: false,
+			})
+		} else {
+			serversPool = append(serversPool, Server{
+				Url: url, IsHealthy: true,
+			})
+		}
 	}
+
+	balancer := Balancer{serversPool}
 
 	balancer.StartHealthService()
 	frontend := httptools.CreateServer(*port, http.HandlerFunc(balancer.Handle))
 
 	log.Println("Starting load balancer...")
 	log.Printf("Tracing support enabled: %t", *traceEnabled)
+	log.Printf("Timeout: %d seconds", *timeoutSec)
 	frontend.Start()
 	signal.WaitForTerminationSignal()
 }
