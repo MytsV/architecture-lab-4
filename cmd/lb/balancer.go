@@ -43,8 +43,7 @@ type Server struct {
 	// We count all connections but health checks made by balancer to the server
 	// Counter manipulation is implemented with locking to prevent data races
 	ConnectionCnt Counter
-	// As changing IsHealthy is an atomic operation, we don't need to synchronize it
-	IsHealthy bool
+	IsHealthy     SyncBool
 }
 
 // Counter prevents data races and can be used from several goroutines
@@ -60,6 +59,24 @@ func (c *Counter) Change(amount int) {
 }
 
 func (c *Counter) Get() int {
+	c.mu.Lock()
+	res := c.v
+	c.mu.Unlock()
+	return res
+}
+
+type SyncBool struct {
+	mu sync.Mutex
+	v  bool
+}
+
+func (c *SyncBool) Set(value bool) {
+	c.mu.Lock()
+	c.v = value
+	c.mu.Unlock()
+}
+
+func (c *SyncBool) Get() bool {
 	c.mu.Lock()
 	res := c.v
 	c.mu.Unlock()
@@ -110,9 +127,9 @@ func (s *Server) CheckHealth() {
 		fmt.Sprintf("%s://%s/health", scheme(), s.Url), nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		s.IsHealthy = false
+		s.IsHealthy.Set(false)
 	}
-	s.IsHealthy = true
+	s.IsHealthy.Set(true)
 }
 
 // Balancer contains Server list and decides which one to forward a request to
@@ -126,7 +143,7 @@ func (b *Balancer) balance() *Server {
 
 	var min *Server = nil
 	for i := 0; i < len(pool); i++ {
-		if !pool[i].IsHealthy {
+		if !pool[i].IsHealthy.Get() {
 			continue
 		}
 		if min == nil || pool[i].ConnectionCnt.Get() < min.ConnectionCnt.Get() {
@@ -167,11 +184,11 @@ func main() {
 	for _, url := range urlList {
 		if strings.HasPrefix(url, "~") {
 			serversPool = append(serversPool, Server{
-				Url: url[1:len(url)], IsHealthy: false,
+				Url: url[1:len(url)], IsHealthy: SyncBool{v: false},
 			})
 		} else {
 			serversPool = append(serversPool, Server{
-				Url: url, IsHealthy: true,
+				Url: url, IsHealthy: SyncBool{v: true},
 			})
 		}
 	}
