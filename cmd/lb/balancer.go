@@ -178,7 +178,10 @@ func (b *Balancer) Handle(rw http.ResponseWriter, r *http.Request) {
 	if min != nil {
 		min.Forward(rw, r)
 	} else {
-
+		error := "Request handling error: all servers are out of reach"
+		log.Println(error)
+		rw.WriteHeader(http.StatusServiceUnavailable)
+		rw.Write([]byte(error))
 	}
 }
 
