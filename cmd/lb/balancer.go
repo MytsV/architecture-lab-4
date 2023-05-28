@@ -40,34 +40,7 @@ func getTimeout() time.Duration {
 	return time.Duration(*timeoutSec) * time.Second
 }
 
-// Server structure represents a server and its state
-type Server struct {
-	Url string
-	// We count all connections but health checks made by balancer to the server
-	// Counter manipulation is implemented with locking to prevent data races
-	ConnectionCnt Counter
-	IsHealthy     SyncBool
-}
-
-// Counter prevents data races and can be used from several goroutines
-type Counter struct {
-	mu sync.Mutex
-	v  int
-}
-
-func (c *Counter) Change(amount int) {
-	c.mu.Lock()
-	c.v += amount
-	c.mu.Unlock()
-}
-
-func (c *Counter) Get() int {
-	c.mu.Lock()
-	res := c.v
-	c.mu.Unlock()
-	return res
-}
-
+// SyncBool provides synchronization mechanism for a boolean value
 type SyncBool struct {
 	mu sync.Mutex
 	v  bool
@@ -86,10 +59,39 @@ func (c *SyncBool) Get() bool {
 	return res
 }
 
-// Forward processes a request with a server of choice
+// Server structure represents a server and its state
+type Server struct {
+	Url string
+	// We count all connections but health checks made by balancer to the server
+	// Counter manipulation is implemented with locking to prevent data races
+	Connections Counter
+	Health      SyncBool
+}
+
+// Counter contains a simple integer value. It prevents data races and can be used from several goroutines
+type Counter struct {
+	mu sync.Mutex
+	v  int
+}
+
+func (c *Counter) Add(amount int) {
+	c.mu.Lock()
+	c.v += amount
+	c.mu.Unlock()
+}
+
+func (c *Counter) Get() int {
+	c.mu.Lock()
+	res := c.v
+	c.mu.Unlock()
+	return res
+}
+
+// Forward() processes a request with a server of choice
 func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
-	s.ConnectionCnt.Change(1)
-	ctx, _ := context.WithTimeout(r.Context(), getTimeout())
+	s.Connections.Add(1)
+	ctx, cancel := context.WithTimeout(r.Context(), getTimeout())
+	defer cancel()
 	fwdRequest := r.Clone(ctx)
 	fwdRequest.RequestURI = ""
 	fwdRequest.URL.Host = s.Url
@@ -98,7 +100,7 @@ func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
 
 	resp, err := http.DefaultClient.Do(fwdRequest)
 	// As soon as we get a response, inform counter about the connection closing
-	s.ConnectionCnt.Change(-1)
+	s.Connections.Add(-1)
 	if err == nil {
 		for k, values := range resp.Header {
 			for _, value := range values {
@@ -118,40 +120,43 @@ func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
 		return nil
 	} else {
 		log.Printf("Failed to get response from %s: %s", s.Url, err)
-		s.IsHealthy.Set(false)
+		s.Health.Set(false)
 		rw.WriteHeader(http.StatusServiceUnavailable)
 		return err
 	}
 }
 
-// Check health processes server state and changes IsHealthy parameter
+// Check health updates Server Health parameter
 func (s *Server) CheckHealth() {
-	ctx, _ := context.WithTimeout(context.Background(), getTimeout())
+	ctx, cancel := context.WithTimeout(context.Background(), getTimeout())
 	req, _ := http.NewRequestWithContext(ctx, "GET",
 		fmt.Sprintf("%s://%s/health", scheme(), s.Url), nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		s.IsHealthy.Set(false)
+		s.Health.Set(false)
 	} else {
-		s.IsHealthy.Set(true)
+		s.Health.Set(true)
 	}
+	cancel()
 }
 
 // Balancer contains Server list and decides which one to forward a request to
 type Balancer struct {
 	ServersPool []Server
+	// The time in seconds between health checks
+	CheckInterval float64
 }
 
-// balance returns a pointer to a healthy Server with the least connections
+// balance() returns a pointer to a healthy Server with the least connections
 func (b *Balancer) balance() *Server {
 	pool := b.ServersPool
 
 	var min *Server = nil
 	for i := 0; i < len(pool); i++ {
-		if !pool[i].IsHealthy.Get() {
+		if !pool[i].Health.Get() {
 			continue
 		}
-		if min == nil || pool[i].ConnectionCnt.Get() < min.ConnectionCnt.Get() {
+		if min == nil || pool[i].Connections.Get() < min.Connections.Get() {
 			min = &pool[i]
 		}
 	}
@@ -159,20 +164,20 @@ func (b *Balancer) balance() *Server {
 	return min
 }
 
-// StartHealthyService begins to check and update Server health every 10 seconds
+// StartHealthyService() begins to check and update Server health every 10 seconds
 func (b *Balancer) StartHealthService() {
 	for i, _ := range b.ServersPool {
 		b.ServersPool[i].CheckHealth()
 		// Run checks concurrently
 		go func(s *Server) {
-			for range time.Tick(10 * time.Second) {
+			for range time.Tick(time.Duration(b.CheckInterval) * time.Second) {
 				s.CheckHealth()
 			}
 		}(&b.ServersPool[i])
 	}
 }
 
-// Handle processes an HTTP request to balancer
+// Handle() processes an HTTP request to balancer
 func (b *Balancer) Handle(rw http.ResponseWriter, r *http.Request) {
 	min := b.balance()
 	if min != nil {
@@ -193,7 +198,7 @@ func main() {
 		serversPool = append(serversPool, Server{Url: url})
 	}
 
-	balancer := Balancer{serversPool}
+	balancer := Balancer{serversPool, 10}
 
 	//Wait for first health check before starting balancer
 	balancer.StartHealthService()
