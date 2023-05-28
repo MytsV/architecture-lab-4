@@ -13,7 +13,7 @@ import (
 
 var port = flag.Int("port", 8080, "server port")
 var delay = flag.Int("delay-sec", 0, "response delay in seconds")
-var healthFailure = flag.Bool("health", true, "whether the server is healthy")
+var healthFailure = flag.Bool("health", false, "whether the server is healthy")
 
 func main() {
 	flag.Parse()
