@@ -14,21 +14,33 @@ import (
 	"github.com/roman-mazur/design-practice-2-template/signal"
 )
 
-// Some as env variables?
 var (
-	port       = flag.Int("port", 8090, "load balancer port")
-	timeoutSec = flag.Int("timeout-sec", 10, "request timeout time in seconds")
-	https      = flag.Bool("https", false, "whether backends support HTTPs")
-
+	port = flag.Int("port", 8090, "load balancer port")
+	// For easier testing it is set to 10 locally via a flag
+	timeoutSec   = flag.Int("timeout-sec", 3, "request timeout time in seconds")
+	https        = flag.Bool("https", false, "whether backends support HTTPs")
 	traceEnabled = flag.Bool("trace", false, "whether to include tracing information into responses")
+	timeout      = time.Duration(*timeoutSec) * time.Second
 )
 
-type Server struct {
-	Url           string
-	ConnectionCnt Counter
-	IsHealthy     bool
+func scheme() string {
+	if *https {
+		return "https"
+	}
+	return "http"
 }
 
+// Server structure represents a server and its state
+type Server struct {
+	Url string
+	// We count all connections but health checks made by balancer to the server
+	// Counter manipulation is implemented with locking to prevent data races
+	ConnectionCnt Counter
+	// As changing IsHealthy is an atomic operation, we don't need to synchronize it
+	IsHealthy bool
+}
+
+// Counter prevents data races and can be used from several goroutines
 type Counter struct {
 	mu sync.Mutex
 	v  int
@@ -47,11 +59,9 @@ func (c *Counter) Get() int {
 	return res
 }
 
+// Forward processes a request with a server of choice
 func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
 	s.ConnectionCnt.Change(1)
-	defer func() {
-		s.ConnectionCnt.Change(-1)
-	}()
 	ctx, _ := context.WithTimeout(r.Context(), timeout)
 	fwdRequest := r.Clone(ctx)
 	fwdRequest.RequestURI = ""
@@ -60,6 +70,8 @@ func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
 	fwdRequest.Host = s.Url
 
 	resp, err := http.DefaultClient.Do(fwdRequest)
+	// As soon as we get a response, inform counter about the connection closing
+	s.ConnectionCnt.Change(-1)
 	if err == nil {
 		for k, values := range resp.Header {
 			for _, value := range values {
@@ -84,6 +96,7 @@ func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
 	}
 }
 
+// Check health processes server state and changes IsHealthy parameter
 func (s *Server) CheckHealth() {
 	ctx, _ := context.WithTimeout(context.Background(), timeout)
 	req, _ := http.NewRequestWithContext(ctx, "GET",
@@ -95,53 +108,63 @@ func (s *Server) CheckHealth() {
 	s.IsHealthy = true
 }
 
-var (
-	timeout     = time.Duration(*timeoutSec) * time.Second
-	serversPool = []Server{
-		{Url: "server1:8080", IsHealthy: true},
-		{Url: "server2:8080", IsHealthy: false},
-		{Url: "server3:8080", IsHealthy: true},
-	}
-)
-
-func scheme() string {
-	if *https {
-		return "https"
-	}
-	return "http"
+// Balancer contains Server list and decides which one to forward a request to
+type Balancer struct {
+	serversPool []Server
 }
 
-// get to know about independent tests
-// tests for health and test + health communication too
-func Balance(pool []Server) int {
-	min := -1
+// balance returns a pointer to a healthy Server with the least connections
+func (b *Balancer) balance() *Server {
+	pool := b.serversPool
+
+	var min *Server = nil
 	for i := 0; i < len(pool); i++ {
 		if !pool[i].IsHealthy {
 			continue
 		}
-		if min < 0 || pool[i].ConnectionCnt.Get() < pool[min].ConnectionCnt.Get() {
-			min = i
+		if min == nil || pool[i].ConnectionCnt.Get() < min.ConnectionCnt.Get() {
+			min = &pool[i]
 		}
 	}
+
 	return min
+}
+
+// StartHealthyService begins to check and update Server health every 10 seconds
+func (b *Balancer) StartHealthService() {
+	for i, _ := range b.serversPool {
+		// Run checks concurrently
+		go func(s *Server) {
+			for range time.Tick(10 * time.Second) {
+				s.CheckHealth()
+			}
+		}(&b.serversPool[i])
+	}
+}
+
+// Handle processes an HTTP request to balancer
+func (b *Balancer) Handle(rw http.ResponseWriter, r *http.Request) {
+	min := b.balance()
+	if min != nil {
+		min.Forward(rw, r)
+	} else {
+
+	}
 }
 
 func main() {
 	flag.Parse()
 
-	for i, _ := range serversPool {
-		go func(s *Server) {
-			for range time.Tick(10 * time.Second) {
-				s.CheckHealth()
-			}
-		}(&serversPool[i])
+	balancer := Balancer{
+		[]Server{
+			{Url: "server1:8080", IsHealthy: true},
+			{Url: "server2:8080", IsHealthy: false},
+			{Url: "server3:8080", IsHealthy: false},
+		},
 	}
 
-	frontend := httptools.CreateServer(*port, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		// Error if no healthy
-		i := Balance(serversPool)
-		serversPool[i].Forward(rw, r)
-	}))
+	balancer.StartHealthService()
+	frontend := httptools.CreateServer(*port, http.HandlerFunc(balancer.Handle))
 
 	log.Println("Starting load balancer...")
 	log.Printf("Tracing support enabled: %t", *traceEnabled)
