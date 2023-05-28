@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -33,7 +32,6 @@ func main() {
 	report := make(Report)
 
 	h.HandleFunc("/api/v1/some-data", func(rw http.ResponseWriter, r *http.Request) {
-		fmt.Println("Start...")
 		if *delay > 0 && *delay < 300 {
 			time.Sleep(time.Duration(*delay) * time.Second)
 		}
@@ -45,7 +43,6 @@ func main() {
 		_ = json.NewEncoder(rw).Encode([]string{
 			"1", "2",
 		})
-		fmt.Println("Stop...")
 	})
 
 	h.Handle("/report", report)
