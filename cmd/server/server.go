@@ -11,7 +11,7 @@ import (
 )
 
 var port = flag.Int("port", 8080, "server port")
-var delay = flag.Int("delay-sec", 0, "response delay in seconds")
+var delay = flag.Int("delay", 0, "response delay in millseconds")
 var healthInit = flag.Bool("health", true, "initial server health")
 var debug = flag.Bool("debug", false, "whether we can change server's health status")
 
@@ -64,7 +64,7 @@ func main() {
 
 	h.HandleFunc("/api/v1/some-data", func(rw http.ResponseWriter, r *http.Request) {
 		if *delay > 0 && *delay < 300 {
-			time.Sleep(time.Duration(*delay) * time.Second)
+			time.Sleep(time.Duration(*delay) * time.Millisecond)
 		}
 
 		report.Process(r)
