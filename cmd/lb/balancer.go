@@ -183,7 +183,7 @@ func (b *Balancer) Balance() *IServer {
 // StartHealthyService() begins to check and update Server health every 10 seconds
 func (b *Balancer) StartHealthService() {
 	for i, _ := range b.ServersPool {
-		//b.ServersPool[i].CheckHealth()
+		b.ServersPool[i].CheckHealth()
 		// Run checks concurrently
 		go func(s *IServer) {
 			for range time.Tick(time.Duration(b.CheckInterval) * time.Second) {
