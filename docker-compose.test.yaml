@@ -5,13 +5,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.test
+    command: ["go", "test", "./integration", "-count=1", "-v"]  
     networks:
       - servers
     depends_on:
+      - balancer
       - server1
       - server2
       - server3
-      - balancer
 
   balancer:
     # Для тестів включаємо режим відлагодження, коли балансувальник додає інформацію, кому було відправлено запит.
