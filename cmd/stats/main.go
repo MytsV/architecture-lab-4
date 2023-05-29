@@ -26,7 +26,7 @@ func scheme() string {
 	return "http"
 }
 
-func main()  {
+func main() {
 	flag.Parse()
 
 	client := new(http.Client)

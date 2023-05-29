@@ -1,15 +1,15 @@
 package integration
 
 import (
+	"bytes"
 	"fmt"
+	"github.com/stretchr/testify/assert"
 	"net/http"
 	"os"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
-	"bytes"
-	"sync"
-	"strconv"
-	"github.com/stretchr/testify/assert"
 )
 
 const baseAddress = "http://balancer:8090"
@@ -31,8 +31,8 @@ func TestBalancer(t *testing.T) {
 	}
 
 	/*
-	HealthService initiates server status, the unhealthy one is ommited
-	Synchronous requests lead to usage of only one server - first HEALTHY one
+		HealthService initiates server status, the unhealthy one is ommited
+		Synchronous requests lead to usage of only one server - first HEALTHY one
 	*/
 
 	for i := 0; i < 5; i++ {
@@ -50,7 +50,7 @@ func TestBalancer(t *testing.T) {
 	}
 
 	/*
-	After double the max interval server health status is updated and requests go to server1
+		After double the max interval server health status is updated and requests go to server1
 	*/
 	time.Sleep(time.Duration(2) * time.Second)
 
@@ -76,7 +76,7 @@ func TestBalancer(t *testing.T) {
 			idx := resp.Header.Get("lb-from")[6:7]
 			serverIdx, err := strconv.Atoi(idx)
 			if err == nil {
-				cover[serverIdx - 1] = true
+				cover[serverIdx-1] = true
 			}
 		}()
 	}
@@ -100,7 +100,7 @@ func TestBalancer(t *testing.T) {
 	}
 
 	/*
-	After double the max interval server health status is surely updated
+		After double the max interval server health status is surely updated
 	*/
 	time.Sleep(time.Duration(2) * time.Second)
 
@@ -125,12 +125,12 @@ func BenchmarkBalancer(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		go func() {
 			defer wg.Done()
-        	resp, err := client.Get(fmt.Sprintf("%s/api/v1/some-data", baseAddress))
+			resp, err := client.Get(fmt.Sprintf("%s/api/v1/some-data", baseAddress))
 			if err != nil || resp.StatusCode != http.StatusOK {
 				b.Error(err)
 			}
 		}()
-    }
+	}
 
 	wg.Wait()
 }
