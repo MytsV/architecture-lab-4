@@ -19,6 +19,7 @@ var (
 	port = flag.Int("port", 8090, "load balancer port")
 	// For easier testing it is set to 10 locally via a flag
 	timeoutSec   = flag.Int("timeout-sec", 3, "request timeout time in seconds")
+	healthInterval   = flag.Float64("health-interval", 10, "time between health checks in seconds")
 	https        = flag.Bool("https", false, "whether backends support HTTPs")
 	traceEnabled = flag.Bool("trace", false, "whether to include tracing information into responses")
 	// Pass server pool as a parameter for easy local run (in order to check for data races, for example)
@@ -69,7 +70,7 @@ type IServer interface {
 // Server structure represents a server and its state
 type Server struct {
 	Url string
-	// We count all connections but health checks made by balancer to the server
+	// We count all connections, except for health checks, made by balancer to the server
 	// Counter manipulation is implemented with locking to prevent data races
 	connections Counter
 	health      SyncBool
@@ -213,7 +214,7 @@ func main() {
 		serversPool = append(serversPool, &Server{Url: url})
 	}
 
-	balancer := Balancer{serversPool, 10}
+	balancer := Balancer{serversPool, *healthInterval}
 
 	//Wait for first health check before starting balancer
 	balancer.StartHealthService()
