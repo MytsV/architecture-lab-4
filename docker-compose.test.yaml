@@ -5,7 +5,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.test
-    command: ["go", "test", "./integration", "-count=1", "-v"]  
+    command:
+      - /bin/sh
+      - -c
+      - |
+        go test ./integration -count=1 -v -bench=. -benchtime=100x
     networks:
       - servers
     depends_on:
@@ -16,4 +20,13 @@ services:
 
   balancer:
     # Для тестів включаємо режим відлагодження, коли балансувальник додає інформацію, кому було відправлено запит.
-    command: ["lb", "--trace=true"]
+    command: ["lb", "--trace=true", "--health-interval=1"]
+
+  server1:
+    command: ["server", "--delay=10", "--health=false", "--debug"]
+  
+  server2:
+    command: ["server", "--delay=5", "--debug"]
+
+  server3:
+    command: ["server", "--delay=5", "--debug"]
