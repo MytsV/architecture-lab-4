@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 var ErrNotFound = fmt.Errorf("record does not exist")
@@ -14,7 +15,7 @@ var ErrNotFound = fmt.Errorf("record does not exist")
 type hashIndex map[string]int64
 
 type block struct {
-	index   hashIndex
+	index   sync.Map
 	segment *os.File
 
 	outPath   string
@@ -28,7 +29,7 @@ func newBlock(dir string, outFileName string, outFileSize int64) (*block, error)
 		return nil, err
 	}
 	bl := &block{
-		index:   make(hashIndex),
+		index:   sync.Map{},
 		segment: f,
 
 		outPath: outputPath,
@@ -80,7 +81,7 @@ func (b *block) recover() error {
 
 			var e entry
 			e.Decode(data)
-			b.index[e.key] = b.outOffset
+			b.index.Store(e.key, b.outOffset)
 			b.outOffset += int64(n)
 		}
 	}
@@ -92,10 +93,12 @@ func (b *block) close() error {
 }
 
 func (b *block) get(key string) (string, error) {
-	position, ok := b.index[key]
+	val, ok := b.index.Load(key)
 	if !ok {
 		return "", ErrNotFound
 	}
+
+	position := val.(int64)
 
 	file, err := os.Open(b.outPath)
 	if err != nil {
@@ -124,7 +127,7 @@ func (b *block) put(key, value string) error {
 
 	n, err := b.segment.Write(e.Encode())
 	if err == nil {
-		b.index[key] = b.outOffset
+		b.index.Store(key, b.outOffset)
 		b.outOffset += int64(n)
 	}
 	return err
@@ -158,16 +161,18 @@ func compactAndMergeBlocksIntoOne(blocks []*block) (*block, error) {
 }
 
 func merge2blocks(destBlock, srcBlock *block) error {
-	for key := range srcBlock.index {
-		_, ok := destBlock.index[key]
+	srcBlock.index.Range(func(key, value interface{}) bool {
+		_, ok := destBlock.index.Load(key)
 		if !ok {
-			val, err := srcBlock.get(key)
+			val, err := srcBlock.get(key.(string))
 			if err != nil {
-				return err
+				return false
 			}
-			destBlock.put(key, val)
+			destBlock.put(key.(string), val)
 		}
-	}
+		return true
+	})
+
 	return nil
 }
 
