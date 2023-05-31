@@ -15,11 +15,12 @@ var ErrNotFound = fmt.Errorf("record does not exist")
 type hashIndex map[string]int64
 
 type block struct {
-	index   sync.Map
+	index   hashIndex
 	segment *os.File
 
 	outPath   string
 	outOffset int64
+	mu        sync.RWMutex
 }
 
 func newBlock(dir string, outFileName string, outFileSize int64) (*block, error) {
@@ -29,7 +30,7 @@ func newBlock(dir string, outFileName string, outFileSize int64) (*block, error)
 		return nil, err
 	}
 	bl := &block{
-		index:   sync.Map{},
+		index:   make(hashIndex),
 		segment: f,
 
 		outPath: outputPath,
@@ -81,7 +82,7 @@ func (b *block) recover() error {
 
 			var e entry
 			e.Decode(data)
-			b.index.Store(e.key, b.outOffset)
+			b.index[e.key] = b.outOffset
 			b.outOffset += int64(n)
 		}
 	}
@@ -93,12 +94,13 @@ func (b *block) close() error {
 }
 
 func (b *block) get(key string) (string, error) {
-	val, ok := b.index.Load(key)
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	position, ok := b.index[key]
 	if !ok {
 		return "", ErrNotFound
 	}
-
-	position := val.(int64)
 
 	file, err := os.Open(b.outPath)
 	if err != nil {
@@ -120,6 +122,9 @@ func (b *block) get(key string) (string, error) {
 }
 
 func (b *block) put(key, value string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	e := entry{
 		key:   key,
 		value: value,
@@ -127,7 +132,7 @@ func (b *block) put(key, value string) error {
 
 	n, err := b.segment.Write(e.Encode())
 	if err == nil {
-		b.index.Store(key, b.outOffset)
+		b.index[key] = b.outOffset
 		b.outOffset += int64(n)
 	}
 	return err
@@ -161,18 +166,16 @@ func compactAndMergeBlocksIntoOne(blocks []*block) (*block, error) {
 }
 
 func merge2blocks(destBlock, srcBlock *block) error {
-	srcBlock.index.Range(func(key, value interface{}) bool {
-		_, ok := destBlock.index.Load(key)
+	for key := range srcBlock.index {
+		_, ok := destBlock.index[key]
 		if !ok {
-			val, err := srcBlock.get(key.(string))
+			val, err := srcBlock.get(key)
 			if err != nil {
-				return false
+				return err
 			}
-			destBlock.put(key.(string), val)
+			destBlock.put(key, val)
 		}
-		return true
-	})
-
+	}
 	return nil
 }
 
