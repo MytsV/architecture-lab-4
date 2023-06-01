@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"flag"
+	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/roman-mazur/design-practice-2-template/datastore"
@@ -22,8 +24,6 @@ func main() {
 		panic(err)
 	}
 	db = newDb
-
-	//db.Put("codebryksy", time.Now().Format("2006-01-02"))
 
 	h.HandleFunc("/db/", handleDb)
 
@@ -97,8 +97,39 @@ func getInt64(key string) (interface{}, error) {
 func handleDbPost(rw http.ResponseWriter, r *http.Request) {
 	key := strings.TrimPrefix(r.URL.Path, "/db/")
 	value := r.FormValue("value")
-	err := db.Put(key, value)
+	t := r.URL.Query().Get("type")
+	putter := typeToPutter(t)
+	if putter == nil {
+		http.Error(rw, "Unknown data type", http.StatusBadRequest)
+		return
+	}
+	err := putter(key, value)
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusBadRequest)
 	}
+}
+
+func typeToPutter(t string) func(string, string) error {
+	if t == "" || t == "string" {
+		return put
+	} else if t == "int64" {
+		return putInt64
+	} else {
+		return nil
+	}
+}
+
+func put(key, value string) error {
+	if value == "" {
+		return fmt.Errorf("Can't save empty value")
+	}
+	return db.Put(key, value)
+}
+
+func putInt64(key, value string) error {
+	i, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return fmt.Errorf("Can't convert value to the given type")
+	}
+	return db.PutInt64(key, i)
 }
