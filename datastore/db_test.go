@@ -21,7 +21,6 @@ func TestDb_Put(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
 
 	pairs := [][]string{
 		{"key1", "value1"},
@@ -171,4 +170,6 @@ func TestDb_Put(t *testing.T) {
 			t.Errorf("Expected 2 files in the directory, got %v", n)
 		}
 	})
+
+	db.Close()
 }
