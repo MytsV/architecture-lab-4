@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/roman-mazur/design-practice-2-template/httptools"
@@ -15,19 +17,17 @@ import (
 
 var (
 	port = flag.Int("port", 8090, "load balancer port")
-	timeoutSec = flag.Int("timeout-sec", 3, "request timeout time in seconds")
-	https = flag.Bool("https", false, "whether backends support HTTPs")
-
-	traceEnabled = flag.Bool("trace", false, "whether to include tracing information into responses")
-)
-
-var (
-	timeout = time.Duration(*timeoutSec) * time.Second
-	serversPool = []string{
-		"server1:8080",
-		"server2:8080",
-		"server3:8080",
-	}
+	// For easier testing it is set to 10 locally via a flag
+	timeoutSec     = flag.Int("timeout-sec", 3, "request timeout time in seconds")
+	healthInterval = flag.Float64("health-interval", 10, "time between health checks in seconds")
+	https          = flag.Bool("https", false, "whether backends support HTTPs")
+	traceEnabled   = flag.Bool("trace", false, "whether to include tracing information into responses")
+	// Pass server pool as a parameter for easy local run (in order to check for data races, for example)
+	serverUrls = flag.String(
+		"servers",
+		"server1:8080,server2:8080,server3:8080",
+		"comma separated list of server URLs",
+	)
 )
 
 func scheme() string {
@@ -37,29 +37,78 @@ func scheme() string {
 	return "http"
 }
 
-func health(dst string) bool {
-	ctx, _ := context.WithTimeout(context.Background(), timeout)
-	req, _ := http.NewRequestWithContext(ctx, "GET",
-		fmt.Sprintf("%s://%s/health", scheme(), dst), nil)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return false
-	}
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-	return true
+func getTimeout() time.Duration {
+	return time.Duration(*timeoutSec) * time.Second
 }
 
-func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
-	ctx, _ := context.WithTimeout(r.Context(), timeout)
+// SyncBool provides synchronization mechanism for a boolean value
+type SyncBool struct {
+	mu sync.Mutex
+	v  bool
+}
+
+func (c *SyncBool) Set(value bool) {
+	c.mu.Lock()
+	c.v = value
+	c.mu.Unlock()
+}
+
+func (c *SyncBool) Get() bool {
+	c.mu.Lock()
+	res := c.v
+	c.mu.Unlock()
+	return res
+}
+
+type IServer interface {
+	Connections() *Counter
+	Health() *SyncBool
+	Forward(rw http.ResponseWriter, r *http.Request) error
+	CheckHealth()
+}
+
+// Server structure represents a server and its state
+type Server struct {
+	Url string
+	// We count all connections, except for health checks, made by balancer to the server
+	// Counter manipulation is implemented with locking to prevent data races
+	connections Counter
+	health      SyncBool
+}
+
+// Counter contains a simple integer value. It prevents data races and can be used from several goroutines
+type Counter struct {
+	mu sync.Mutex
+	v  int
+}
+
+func (c *Counter) Add(amount int) {
+	c.mu.Lock()
+	c.v += amount
+	c.mu.Unlock()
+}
+
+func (c *Counter) Get() int {
+	c.mu.Lock()
+	res := c.v
+	c.mu.Unlock()
+	return res
+}
+
+// Forward() processes a request with a server of choice
+func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
+	s.Connections().Add(1)
+	ctx, cancel := context.WithTimeout(r.Context(), getTimeout())
+	defer cancel()
 	fwdRequest := r.Clone(ctx)
 	fwdRequest.RequestURI = ""
-	fwdRequest.URL.Host = dst
+	fwdRequest.URL.Host = s.Url
 	fwdRequest.URL.Scheme = scheme()
-	fwdRequest.Host = dst
+	fwdRequest.Host = s.Url
 
 	resp, err := http.DefaultClient.Do(fwdRequest)
+	// As soon as we get a response, inform counter about the connection closing
+	s.Connections().Add(-1)
 	if err == nil {
 		for k, values := range resp.Header {
 			for _, value := range values {
@@ -67,7 +116,7 @@ func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		if *traceEnabled {
-			rw.Header().Set("lb-from", dst)
+			rw.Header().Set("lb-from", s.Url)
 		}
 		log.Println("fwd", resp.StatusCode, resp.Request.URL)
 		rw.WriteHeader(resp.StatusCode)
@@ -78,32 +127,102 @@ func forward(dst string, rw http.ResponseWriter, r *http.Request) error {
 		}
 		return nil
 	} else {
-		log.Printf("Failed to get response from %s: %s", dst, err)
+		log.Printf("Failed to get response from %s: %s", s.Url, err)
+		s.Health().Set(false)
 		rw.WriteHeader(http.StatusServiceUnavailable)
 		return err
 	}
 }
 
-func main() {
-	flag.Parse()
+// Check health updates Server Health parameter
+func (s *Server) CheckHealth() {
+	ctx, cancel := context.WithTimeout(context.Background(), getTimeout())
+	req, _ := http.NewRequestWithContext(ctx, "GET",
+		fmt.Sprintf("%s://%s/health", scheme(), s.Url), nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		s.Health().Set(false)
+	} else {
+		s.Health().Set(true)
+	}
+	cancel()
+}
 
-	// TODO: Використовуйте дані про стан сервреа, щоб підтримувати список тих серверів, яким можна відправляти ззапит.
-	for _, server := range serversPool {
-		server := server
-		go func() {
-			for range time.Tick(10 * time.Second) {
-				log.Println(server, health(server))
-			}
-		}()
+func (s *Server) Connections() *Counter {
+	return &s.connections
+}
+
+func (s *Server) Health() *SyncBool {
+	return &s.health
+}
+
+// Balancer contains Server list and decides which one to forward a request to
+type Balancer struct {
+	ServersPool []IServer
+	// The time in seconds between health checks
+	CheckInterval float64
+}
+
+// balance() returns a pointer to a healthy Server with the least connections
+func (b *Balancer) Balance() *IServer {
+	pool := b.ServersPool
+
+	var min *IServer = nil
+	for i := 0; i < len(pool); i++ {
+		if !pool[i].Health().Get() {
+			continue
+		}
+		if min == nil || pool[i].Connections().Get() < (*min).Connections().Get() {
+			min = &pool[i]
+		}
 	}
 
-	frontend := httptools.CreateServer(*port, http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-		// TODO: Рееалізуйте свій алгоритм балансувальника.
-		forward(serversPool[0], rw, r)
-	}))
+	return min
+}
+
+// StartHealthyService() begins to check and update Server health every 10 seconds
+func (b *Balancer) StartHealthService() {
+	for i, _ := range b.ServersPool {
+		b.ServersPool[i].CheckHealth()
+		// Run checks concurrently
+		go func(s *IServer) {
+			for range time.Tick(time.Duration(b.CheckInterval) * time.Second) {
+				(*s).CheckHealth()
+			}
+		}(&b.ServersPool[i])
+	}
+}
+
+// Handle() processes an HTTP request to balancer
+func (b *Balancer) Handle(rw http.ResponseWriter, r *http.Request) {
+	min := b.Balance()
+	if min != nil {
+		(*min).Forward(rw, r)
+	} else {
+		error := "Request handling error: all servers are out of reach"
+		log.Println(error)
+		rw.WriteHeader(http.StatusServiceUnavailable)
+		rw.Write([]byte(error))
+	}
+}
+
+func main() {
+	flag.Parse()
+	urlList := strings.Split(*serverUrls, ",")
+	serversPool := []IServer{}
+	for _, url := range urlList {
+		serversPool = append(serversPool, &Server{Url: url})
+	}
+
+	balancer := Balancer{serversPool, *healthInterval}
+
+	//Wait for first health check before starting balancer
+	balancer.StartHealthService()
+	frontend := httptools.CreateServer(*port, http.HandlerFunc(balancer.Handle))
 
 	log.Println("Starting load balancer...")
 	log.Printf("Tracing support enabled: %t", *traceEnabled)
+	log.Printf("Timeout: %d seconds", *timeoutSec)
 	frontend.Start()
 	signal.WaitForTerminationSignal()
 }
