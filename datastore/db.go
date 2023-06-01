@@ -137,6 +137,8 @@ func (db *Db) putType(key, vType, value string) error {
 		}
 		return err
 	}
+
+	actBlock.close()
 	//якщо нема вже куди писати, то створюємо новий блок
 	err = db.addNewBlockToDb()
 	if err != nil {
