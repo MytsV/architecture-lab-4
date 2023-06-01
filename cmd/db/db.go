@@ -43,20 +43,55 @@ func handleDb(rw http.ResponseWriter, r *http.Request) {
 	}
 }
 
-type entry struct {
-	Key   string `json:"key"`
-	Value string `json:"value"`
-}
-
 func handleDbGet(rw http.ResponseWriter, r *http.Request) {
 	key := strings.TrimPrefix(r.URL.Path, "/db/")
-	value, err := db.Get(key)
+	t := r.URL.Query().Get("type")
+	getter := typeToGetter(t)
+	if getter == nil {
+		http.Error(rw, "Unknown data type", http.StatusBadRequest)
+		return
+	}
+	data, err := getter(key)
+
 	if err != nil {
 		http.Error(rw, err.Error(), http.StatusBadRequest)
 	} else {
-		e := entry{Key: key, Value: value}
-		_ = json.NewEncoder(rw).Encode(e)
+		_ = json.NewEncoder(rw).Encode(data)
 	}
+}
+
+func typeToGetter(t string) func(string) (interface{}, error) {
+	if t == "" || t == "string" {
+		return get
+	} else if t == "int64" {
+		return getInt64
+	} else {
+		return nil
+	}
+}
+
+func get(key string) (interface{}, error) {
+	value, err := db.Get(key)
+	if err != nil {
+		return nil, err
+	}
+	data := struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	}{key, value}
+	return data, nil
+}
+
+func getInt64(key string) (interface{}, error) {
+	value, err := db.GetInt64(key)
+	if err != nil {
+		return nil, err
+	}
+	data := struct {
+		Key   string `json:"key"`
+		Value int64  `json:"value"`
+	}{key, value}
+	return data, nil
 }
 
 func handleDbPost(rw http.ResponseWriter, r *http.Request) {
