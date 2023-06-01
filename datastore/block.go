@@ -107,40 +107,50 @@ func (b *block) close() error {
 	return b.segment.Close()
 }
 
-func (b *block) get(key string) (string, error) {
+func (b *block) get(key string) (string, string, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
 	position, ok := b.index[key]
 	if !ok {
-		return "", ErrNotFound
+		return "", "", ErrNotFound
 	}
 
 	file, err := os.Open(b.outPath)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer file.Close()
 
 	_, err = file.Seek(position, 0)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	reader := bufio.NewReader(file)
 	value, err := readValue(reader)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return value, nil
+
+	_, err = file.Seek(position, 0)
+	if err != nil {
+		return "", "", err
+	}
+	vType, err := readType(reader)
+	if err != nil {
+		return "", "", err
+	}
+	return value, vType, nil
 }
 
-func (b *block) put(key, value string) error {
+func (b *block) put(key, vType, value string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	e := entry{
 		key:   key,
+		vType: vType,
 		value: value,
 	}
 
@@ -199,15 +209,41 @@ func compactAndMergeBlocksIntoOne(blocks []*block) (*block, error) {
 	return newBlock, nil
 }
 
+/*
+	func mergeBlocks(b1, b2 *block) (*block, error) {
+		newBlock, err := newBlock(b1.outPath+"-temp", "", 0)
+		if err != nil {
+			return nil, err
+		}
+		for j := len(blocks) - 1; j >= 0; j = j - 1 {
+			err = merge2blocks(newBlock, blocks[j])
+			if err != nil {
+				return nil, err
+			}
+		}
+		return newBlock, nil
+		for key := range srcBlock.index {
+			_, ok := destBlock.index[key]
+			if !ok {
+				val, vType, err := srcBlock.get(key)
+				if err != nil {
+					return err
+				}
+				destBlock.put(key, vType, val)
+			}
+		}
+		return nil
+	}
+*/
 func merge2blocks(destBlock, srcBlock *block) error {
 	for key := range srcBlock.index {
 		_, ok := destBlock.index[key]
 		if !ok {
-			val, err := srcBlock.get(key)
+			val, vType, err := srcBlock.get(key)
 			if err != nil {
 				return err
 			}
-			destBlock.put(key, val)
+			destBlock.put(key, vType, val)
 		}
 	}
 	return nil
