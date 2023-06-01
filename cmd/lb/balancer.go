@@ -59,13 +59,20 @@ func (c *SyncBool) Get() bool {
 	return res
 }
 
+type IServer interface {
+	Connections() *Counter
+	Health() *SyncBool
+	Forward(rw http.ResponseWriter, r *http.Request) error
+	CheckHealth()
+}
+
 // Server structure represents a server and its state
 type Server struct {
 	Url string
 	// We count all connections but health checks made by balancer to the server
 	// Counter manipulation is implemented with locking to prevent data races
-	Connections Counter
-	Health      SyncBool
+	connections Counter
+	health      SyncBool
 }
 
 // Counter contains a simple integer value. It prevents data races and can be used from several goroutines
@@ -89,7 +96,7 @@ func (c *Counter) Get() int {
 
 // Forward() processes a request with a server of choice
 func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
-	s.Connections.Add(1)
+	s.Connections().Add(1)
 	ctx, cancel := context.WithTimeout(r.Context(), getTimeout())
 	defer cancel()
 	fwdRequest := r.Clone(ctx)
@@ -100,7 +107,7 @@ func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
 
 	resp, err := http.DefaultClient.Do(fwdRequest)
 	// As soon as we get a response, inform counter about the connection closing
-	s.Connections.Add(-1)
+	s.Connections().Add(-1)
 	if err == nil {
 		for k, values := range resp.Header {
 			for _, value := range values {
@@ -120,7 +127,7 @@ func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
 		return nil
 	} else {
 		log.Printf("Failed to get response from %s: %s", s.Url, err)
-		s.Health.Set(false)
+		s.Health().Set(false)
 		rw.WriteHeader(http.StatusServiceUnavailable)
 		return err
 	}
@@ -133,30 +140,38 @@ func (s *Server) CheckHealth() {
 		fmt.Sprintf("%s://%s/health", scheme(), s.Url), nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		s.Health.Set(false)
+		s.Health().Set(false)
 	} else {
-		s.Health.Set(true)
+		s.Health().Set(true)
 	}
 	cancel()
 }
 
+func (s *Server) Connections() *Counter {
+	return &s.connections
+}
+
+func (s *Server) Health() *SyncBool {
+	return &s.health
+}
+
 // Balancer contains Server list and decides which one to forward a request to
 type Balancer struct {
-	ServersPool []Server
+	ServersPool []IServer
 	// The time in seconds between health checks
 	CheckInterval float64
 }
 
 // balance() returns a pointer to a healthy Server with the least connections
-func (b *Balancer) balance() *Server {
+func (b *Balancer) Balance() *IServer {
 	pool := b.ServersPool
 
-	var min *Server = nil
+	var min *IServer = nil
 	for i := 0; i < len(pool); i++ {
-		if !pool[i].Health.Get() {
+		if !pool[i].Health().Get() {
 			continue
 		}
-		if min == nil || pool[i].Connections.Get() < min.Connections.Get() {
+		if min == nil || pool[i].Connections().Get() < (*min).Connections().Get() {
 			min = &pool[i]
 		}
 	}
@@ -169,9 +184,9 @@ func (b *Balancer) StartHealthService() {
 	for i, _ := range b.ServersPool {
 		b.ServersPool[i].CheckHealth()
 		// Run checks concurrently
-		go func(s *Server) {
+		go func(s *IServer) {
 			for range time.Tick(time.Duration(b.CheckInterval) * time.Second) {
-				s.CheckHealth()
+				(*s).CheckHealth()
 			}
 		}(&b.ServersPool[i])
 	}
@@ -179,9 +194,9 @@ func (b *Balancer) StartHealthService() {
 
 // Handle() processes an HTTP request to balancer
 func (b *Balancer) Handle(rw http.ResponseWriter, r *http.Request) {
-	min := b.balance()
+	min := b.Balance()
 	if min != nil {
-		min.Forward(rw, r)
+		(*min).Forward(rw, r)
 	} else {
 		error := "Request handling error: all servers are out of reach"
 		log.Println(error)
@@ -193,9 +208,9 @@ func (b *Balancer) Handle(rw http.ResponseWriter, r *http.Request) {
 func main() {
 	flag.Parse()
 	urlList := strings.Split(*serverUrls, ",")
-	serversPool := []Server{}
+	serversPool := []IServer{}
 	for _, url := range urlList {
-		serversPool = append(serversPool, Server{Url: url})
+		serversPool = append(serversPool, &Server{Url: url})
 	}
 
 	balancer := Balancer{serversPool, 10}
