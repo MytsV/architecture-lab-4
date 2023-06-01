@@ -18,10 +18,10 @@ import (
 var (
 	port = flag.Int("port", 8090, "load balancer port")
 	// For easier testing it is set to 10 locally via a flag
-	timeoutSec   = flag.Int("timeout-sec", 3, "request timeout time in seconds")
-	healthInterval   = flag.Float64("health-interval", 10, "time between health checks in seconds")
-	https        = flag.Bool("https", false, "whether backends support HTTPs")
-	traceEnabled = flag.Bool("trace", false, "whether to include tracing information into responses")
+	timeoutSec     = flag.Int("timeout-sec", 3, "request timeout time in seconds")
+	healthInterval = flag.Float64("health-interval", 10, "time between health checks in seconds")
+	https          = flag.Bool("https", false, "whether backends support HTTPs")
+	traceEnabled   = flag.Bool("trace", false, "whether to include tracing information into responses")
 	// Pass server pool as a parameter for easy local run (in order to check for data races, for example)
 	serverUrls = flag.String(
 		"servers",

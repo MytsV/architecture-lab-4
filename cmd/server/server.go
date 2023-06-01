@@ -3,11 +3,11 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"net/http"
-	"time"
-	"sync"
 	"github.com/roman-mazur/design-practice-2-template/httptools"
 	"github.com/roman-mazur/design-practice-2-template/signal"
+	"net/http"
+	"sync"
+	"time"
 )
 
 var port = flag.Int("port", 8080, "server port")
@@ -32,7 +32,6 @@ func (c *boolMutex) Get() bool {
 	c.mu.Unlock()
 	return res
 }
-
 
 func main() {
 	flag.Parse()
