@@ -24,7 +24,10 @@ type Db struct {
 	segmentNumber int
 	segmentSize   int64
 
-	//finished   chan struct{}
+	closed     chan struct{}
+	finished   chan struct{}
+	shouldStop bool
+	blocked    chan struct{}
 }
 
 func NewDb(dir string) (*Db, error) {
@@ -60,8 +63,8 @@ func NewDb(dir string) (*Db, error) {
 	}
 
 	// Ініціалізуємо індентифікатор завершення циклу.
-	//db.finished = make(chan struct{})
-	//go beginMergeRoutine(db)
+	db.finished = make(chan struct{})
+	go beginMergeRoutine(db)
 	return db, nil
 }
 
@@ -104,8 +107,8 @@ func (db *Db) recover(filesNames []string) error {
 }
 
 func (db *Db) Close() error {
-	//db.shouldStop = true
-	//close(db.finished)
+	close(db.closed)
+	<-db.finished
 	return db.blocks[len(db.blocks)-1].close()
 }
 
@@ -148,14 +151,15 @@ func (db *Db) putType(key, vType, value string) error {
 	if err != nil {
 		return err
 	}
-
-	//запускаємо мердж, якщо достатньо файлів
-	if len(db.blocks) > 2 {
-		err = db.compactAndMerge()
-		if err != nil {
-			return err
+	/*
+		//запускаємо мердж, якщо достатньо файлів
+		if len(db.blocks) > 2 {
+			err = db.compactAndMerge()
+			if err != nil {
+				return err
+			}
 		}
-	}
+	*/
 	return nil
 }
 
@@ -201,7 +205,6 @@ func (db *Db) PutInt64(key string, value int64) error {
 	return nil
 }
 
-/*
 func (db *Db) merge() error {
 	tempBlock, err := compactAndMergeBlocksIntoOne(db.blocks[:len(db.blocks)-1])
 	if err != nil {
@@ -227,34 +230,37 @@ func (db *Db) merge() error {
 	if err != nil {
 		return err
 	}
+
+	if db.blocked != nil {
+		close(db.blocked)
+		db.blocked = nil
+	}
+
+	fmt.Println("why")
 	return nil
 }
 
 func beginMergeRoutine(db *Db) {
-	for {
+	for len(db.blocks) > 2 || !db.shouldStop {
 		if len(db.blocks) > 2 {
+			db.blocked = make(chan struct{})
 			err := db.merge()
 			if err != nil {
 				fmt.Println(err)
 			}
+			<-db.blocked
 		}
 		select {
-
-		case <-db.finished:
-			if len(db.blocks) > 2 {
-				err := db.merge()
-				if err != nil {
-					fmt.Println(err)
-				}
-			}
-			return
+		default:
+		case <-db.closed:
+			db.shouldStop = true
 		}
-
 	}
+	close(db.finished)
+	db.finished = nil
 }
 
-*/
-
+/*
 func (db *Db) compactAndMerge() error {
 	tempBlock, err := compactAndMergeBlocksIntoOne(db.blocks[:len(db.blocks)-1])
 	if err != nil {
@@ -282,3 +288,4 @@ func (db *Db) compactAndMerge() error {
 	}
 	return nil
 }
+*/
