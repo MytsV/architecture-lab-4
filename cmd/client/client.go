@@ -16,11 +16,13 @@ func main() {
 	client.Timeout = 10 * time.Second
 
 	for range time.Tick(1 * time.Second) {
-		resp, err := client.Get(fmt.Sprintf("%s/api/v1/some-data", *target))
-		if err == nil {
-			log.Printf("response %d", resp.StatusCode)
-		} else {
-			log.Printf("error %s", err)
-		}
+		go func() {
+			resp, err := client.Get(fmt.Sprintf("%s/api/v1/some-data", *target))
+			if err == nil {
+				log.Printf("response %d", resp.StatusCode)
+			} else {
+				log.Printf("error %s", err)
+			}
+		}()
 	}
 }
