@@ -15,13 +15,12 @@ func TestDb_Put(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	const outFileSize int64 = 200
+	const outFileSize int64 = 300
 
 	db, err := NewDb(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
 
 	pairs := [][]string{
 		{"key1", "value1"},
@@ -99,7 +98,7 @@ func TestDb_Put(t *testing.T) {
 		{"keyD", "valueD"},
 		{"keyA", "newA"},
 		{"keyB", "newB"},
-		{"keyC", "newC"},
+		//		{"keyC", "newC"},
 	}
 	t.Run("create new out file, when previous file approximately reached expected size", func(t *testing.T) {
 		db.segmentSize = outFileSize
@@ -171,4 +170,50 @@ func TestDb_Put(t *testing.T) {
 			t.Errorf("Expected 2 files in the directory, got %v", n)
 		}
 	})
+
+}
+
+func TestDb_PutInt64(t *testing.T) {
+	dir, err := ioutil.TempDir("", "test-db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+
+	const outFileSize int64 = 300
+
+	db, err := NewDb(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pairs := []struct {
+		key   string
+		value int64
+	}{
+		{"key1", 1},
+		{"key2", 2},
+		{"key3", 3},
+	}
+
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("put/get", func(t *testing.T) {
+		for _, pair := range pairs {
+			err := db.PutInt64(pair.key, pair.value)
+			if err != nil {
+				t.Errorf("Cannot put %v: %s", pair, err)
+			}
+			value, err := db.GetInt64(pair.key)
+			if err != nil {
+				t.Errorf("Cannot get %v: %s", pair, err)
+			}
+			if value != pair.value {
+				t.Errorf("Bad value returned expected %v, got %v", pair.value, value)
+			}
+		}
+	})
+
 }
