@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 var ErrNotFound = fmt.Errorf("record does not exist")
@@ -19,6 +20,7 @@ type block struct {
 
 	outPath   string
 	outOffset int64
+	mu        sync.RWMutex
 }
 
 func newBlock(dir string, outFileName string, outFileSize int64) (*block, error) {
@@ -92,6 +94,9 @@ func (b *block) close() error {
 }
 
 func (b *block) get(key string) (string, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
 	position, ok := b.index[key]
 	if !ok {
 		return "", ErrNotFound
@@ -117,6 +122,9 @@ func (b *block) get(key string) (string, error) {
 }
 
 func (b *block) put(key, value string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
 	e := entry{
 		key:   key,
 		value: value,
