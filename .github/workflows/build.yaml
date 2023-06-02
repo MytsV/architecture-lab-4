@@ -2,9 +2,9 @@ name: Go unit and integration tests
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, lab5 ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, lab5 ]
 
 jobs:
 
