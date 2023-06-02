@@ -1,19 +1,22 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"flag"
-	"github.com/roman-mazur/design-practice-2-template/httptools"
-	"github.com/roman-mazur/design-practice-2-template/signal"
+	"io"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/roman-mazur/design-practice-2-template/httptools"
+	"github.com/roman-mazur/design-practice-2-template/signal"
 )
 
 var port = flag.Int("port", 8080, "server port")
 var delay = flag.Int("delay", 0, "response delay in millseconds")
 var healthInit = flag.Bool("health", true, "initial server health")
 var debug = flag.Bool("debug", false, "whether we can change server's health status")
+var dbUrl = flag.String("db-url", "db:8100", "hostname of database service")
 
 type boolMutex struct {
 	mu sync.Mutex
@@ -32,6 +35,8 @@ func (c *boolMutex) Get() bool {
 	c.mu.Unlock()
 	return res
 }
+
+var report Report
 
 func main() {
 	flag.Parse()
@@ -59,25 +64,43 @@ func main() {
 		}
 	})
 
-	report := make(Report)
+	report = make(Report)
 
-	h.HandleFunc("/api/v1/some-data", func(rw http.ResponseWriter, r *http.Request) {
-		if *delay > 0 && *delay < 300 {
-			time.Sleep(time.Duration(*delay) * time.Millisecond)
-		}
-
-		report.Process(r)
-
-		rw.Header().Set("content-type", "application/json")
-		rw.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(rw).Encode([]string{
-			"1", "2",
-		})
-	})
+	h.HandleFunc("/api/v1/some-data", handleDefaultGet)
 
 	h.Handle("/report", report)
 
 	server := httptools.CreateServer(*port, h)
 	server.Start()
 	signal.WaitForTerminationSignal()
+}
+
+func handleDefaultGet(rw http.ResponseWriter, r *http.Request) {
+	key := r.URL.Query().Get("key")
+
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(10)*time.Second)
+	defer cancel()
+	fwdRequest := r.Clone(ctx)
+	fwdRequest.RequestURI = ""
+	fwdRequest.URL.Host = *dbUrl
+	fwdRequest.Host = *dbUrl
+	fwdRequest.URL.Scheme = "http"
+	fwdRequest.URL.Path = "/db/" + key
+
+	resp, err := http.DefaultClient.Do(fwdRequest)
+	if err != nil {
+		http.Error(rw, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if *delay > 0 && *delay < 300 {
+		time.Sleep(time.Duration(*delay) * time.Millisecond)
+	}
+
+	report.Process(r)
+
+	rw.WriteHeader(resp.StatusCode)
+	rw.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	rw.Header().Set("Content-Length", resp.Header.Get("Content-Length"))
+	io.Copy(rw, resp.Body)
+	resp.Body.Close()
 }
