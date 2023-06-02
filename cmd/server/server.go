@@ -5,6 +5,7 @@ import (
 	"flag"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -17,6 +18,9 @@ var delay = flag.Int("delay", 0, "response delay in millseconds")
 var healthInit = flag.Bool("health", true, "initial server health")
 var debug = flag.Bool("debug", false, "whether we can change server's health status")
 var dbUrl = flag.String("db-url", "db:8100", "hostname of database service")
+
+const scheme = "http"
+const team = "codebryksy"
 
 type boolMutex struct {
 	mu sync.Mutex
@@ -42,6 +46,7 @@ func main() {
 	flag.Parse()
 	h := new(http.ServeMux)
 	health := boolMutex{v: *healthInit}
+	writeTeam()
 
 	if *debug {
 		h.HandleFunc("/inverse-health", func(rw http.ResponseWriter, r *http.Request) {
@@ -75,6 +80,17 @@ func main() {
 	signal.WaitForTerminationSignal()
 }
 
+func writeTeam() {
+	path := scheme + "://" + *dbUrl + "/db/" + team
+	formData := url.Values{}
+	formData.Set("value", time.Now().Format("2006-01-02"))
+
+	resp, err := http.PostForm(path, formData)
+	if err != nil || resp.StatusCode != http.StatusOK {
+		panic("Can't initiate DB")
+	}
+}
+
 func handleDefaultGet(rw http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
 
@@ -84,7 +100,7 @@ func handleDefaultGet(rw http.ResponseWriter, r *http.Request) {
 	fwdRequest.RequestURI = ""
 	fwdRequest.URL.Host = *dbUrl
 	fwdRequest.Host = *dbUrl
-	fwdRequest.URL.Scheme = "http"
+	fwdRequest.URL.Scheme = scheme
 	fwdRequest.URL.Path = "/db/" + key
 
 	resp, err := http.DefaultClient.Do(fwdRequest)
