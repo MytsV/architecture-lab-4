@@ -2,6 +2,7 @@ package datastore
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -21,6 +22,11 @@ type block struct {
 	outPath   string
 	outOffset int64
 	mu        sync.RWMutex
+
+	writeCh  chan []byte
+	resultCh chan writeResult
+
+	cancel context.CancelFunc
 }
 
 func newBlock(dir string, outFileName string, outFileSize int64) (*block, error) {
@@ -33,8 +39,13 @@ func newBlock(dir string, outFileName string, outFileSize int64) (*block, error)
 		index:   make(hashIndex),
 		segment: f,
 
-		outPath: outputPath,
+		outPath:  outputPath,
+		writeCh:  make(chan []byte),
+		resultCh: make(chan writeResult),
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	bl.cancel = cancel
+	go bl.write(ctx)
 	err = bl.recover()
 	if err != nil && err != io.EOF {
 		return nil, err
@@ -90,6 +101,9 @@ func (b *block) recover() error {
 }
 
 func (b *block) close() error {
+	b.cancel()
+	close(b.writeCh)
+	close(b.resultCh)
 	return b.segment.Close()
 }
 
@@ -140,12 +154,32 @@ func (b *block) put(key, vType, value string) error {
 		value: value,
 	}
 
-	n, err := b.segment.Write(e.Encode())
-	if err == nil {
+	b.writeCh <- e.Encode()
+	result := <-b.resultCh
+
+	if result.err == nil {
 		b.index[key] = b.outOffset
-		b.outOffset += int64(n)
+		b.outOffset += int64(result.n)
 	}
-	return err
+
+	return result.err
+}
+
+type writeResult struct {
+	n   int
+	err error
+}
+
+func (b *block) write(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case v := <-b.writeCh:
+			n, err := b.segment.Write(v)
+			b.resultCh <- writeResult{n, err}
+		}
+	}
 }
 
 func (b *block) size() (int64, error) {
