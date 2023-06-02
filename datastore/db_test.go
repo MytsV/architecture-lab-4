@@ -171,6 +171,7 @@ func TestDb_Put(t *testing.T) {
 		}
 	})
 
+	db.Close()
 }
 
 func TestDb_PutInt64(t *testing.T) {
