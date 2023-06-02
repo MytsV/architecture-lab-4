@@ -99,6 +99,10 @@ func TestBalancer(t *testing.T) {
 	wg.Wait()
 	assert.Equal(t, [3]bool{true, true, true}, cover)
 
+	// If key is not in database, return 404
+	resp, err = getData("bryksycode")
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+
 	// Debug: inverse health of first server (true -> false)
 	resp, err = client.Post("http://server1:8080/inverse-health", "", bytes.NewBuffer([]byte{}))
 	if err != nil || resp.StatusCode != http.StatusOK {
