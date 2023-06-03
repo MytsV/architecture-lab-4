@@ -101,6 +101,7 @@ func (b *block) recover() error {
 }
 
 func (b *block) close() error {
+	fmt.Printf("I AM CLOSED %s", b.outPath)
 	b.cancel()
 	close(b.writeCh)
 	close(b.resultCh)
