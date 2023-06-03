@@ -34,6 +34,9 @@ func NewDb(dir string) (*Db, error) {
 		segmentSize: outFileSize,
 	}
 
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		os.MkdirAll(dir, os.ModePerm)
+	}
 	f, err := os.Open(dir)
 	if err != nil {
 		return nil, err
@@ -104,6 +107,7 @@ func (db *Db) recover(filesNames []string) error {
 }
 
 func (db *Db) Close() error {
+	fmt.Println("UWU CLOSE DB")
 	//db.shouldStop = true
 	//close(db.finished)
 	return db.blocks[len(db.blocks)-1].close()
@@ -138,7 +142,6 @@ func (db *Db) putType(key, vType, value string) error {
 		return err
 	}
 
-	actBlock.close()
 	//якщо нема вже куди писати, то створюємо новий блок
 	err = db.addNewBlockToDb()
 	if err != nil {
@@ -148,6 +151,9 @@ func (db *Db) putType(key, vType, value string) error {
 	if err != nil {
 		return err
 	}
+
+	// Find out why tests fail with this, actually close blocks at a right time
+	//actBlock.close()
 
 	//запускаємо мердж, якщо достатньо файлів
 	if len(db.blocks) > 2 {

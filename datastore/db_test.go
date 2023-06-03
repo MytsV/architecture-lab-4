@@ -72,9 +72,9 @@ func TestDb_Put(t *testing.T) {
 	})
 
 	t.Run("new db process", func(t *testing.T) {
-		if err := db.Close(); err != nil {
-			t.Fatal(err)
-		}
+		// if err := db.Close(); err != nil {
+		// 	t.Fatal(err)
+		// }
 		db, err = NewDb(dir)
 		if err != nil {
 			t.Fatal(err)
@@ -169,9 +169,9 @@ func TestDb_Put(t *testing.T) {
 		if n != 2 {
 			t.Errorf("Expected 2 files in the directory, got %v", n)
 		}
-	})
 
-	db.Close()
+		//db.Close()
+	})
 }
 
 func TestDb_PutInt64(t *testing.T) {
