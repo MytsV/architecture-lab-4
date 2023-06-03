@@ -72,9 +72,6 @@ func TestDb_Put(t *testing.T) {
 	})
 
 	t.Run("new db process", func(t *testing.T) {
-		// if err := db.Close(); err != nil {
-		// 	t.Fatal(err)
-		// }
 		db, err = NewDb(dir)
 		if err != nil {
 			t.Fatal(err)
@@ -98,7 +95,6 @@ func TestDb_Put(t *testing.T) {
 		{"keyD", "valueD"},
 		{"keyA", "newA"},
 		{"keyB", "newB"},
-		//		{"keyC", "newC"},
 	}
 	t.Run("create new out file, when previous file approximately reached expected size", func(t *testing.T) {
 		db.segmentSize = outFileSize
@@ -169,8 +165,6 @@ func TestDb_Put(t *testing.T) {
 		if n != 2 {
 			t.Errorf("Expected 2 files in the directory, got %v", n)
 		}
-
-		//db.Close()
 	})
 }
 

@@ -29,7 +29,7 @@ type block struct {
 	cancel context.CancelFunc
 }
 
-func newBlock(dir string, outFileName string, outFileSize int64) (*block, error) {
+func newBlock(dir string, outFileName string) (*block, error) {
 	outputPath := filepath.Join(dir, outFileName)
 	f, err := os.OpenFile(outputPath, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600)
 	if err != nil {
@@ -192,17 +192,16 @@ func (b *block) size() (int64, error) {
 	return currentSize, nil
 }
 
-func compactAndMergeBlocksIntoOne(blocks []*block) (*block, error) {
-	//видалити дуплікати e b2
+func mergeAll(blocks []*block) (*block, error) {
 	if len(blocks) == 0 {
 		return nil, fmt.Errorf("empty array of blocks")
 	}
-	newBlock, err := newBlock(blocks[0].outPath+"-temp", "", 0)
+	newBlock, err := newBlock(blocks[0].outPath+"-temp", "")
 	if err != nil {
 		return nil, err
 	}
 	for j := len(blocks) - 1; j >= 0; j = j - 1 {
-		err = merge2blocks(newBlock, blocks[j])
+		err = mergePair(newBlock, blocks[j])
 		if err != nil {
 			return nil, err
 		}
@@ -210,33 +209,7 @@ func compactAndMergeBlocksIntoOne(blocks []*block) (*block, error) {
 	return newBlock, nil
 }
 
-/*
-	func mergeBlocks(b1, b2 *block) (*block, error) {
-		newBlock, err := newBlock(b1.outPath+"-temp", "", 0)
-		if err != nil {
-			return nil, err
-		}
-		for j := len(blocks) - 1; j >= 0; j = j - 1 {
-			err = merge2blocks(newBlock, blocks[j])
-			if err != nil {
-				return nil, err
-			}
-		}
-		return newBlock, nil
-		for key := range srcBlock.index {
-			_, ok := destBlock.index[key]
-			if !ok {
-				val, vType, err := srcBlock.get(key)
-				if err != nil {
-					return err
-				}
-				destBlock.put(key, vType, val)
-			}
-		}
-		return nil
-	}
-*/
-func merge2blocks(destBlock, srcBlock *block) error {
+func mergePair(destBlock, srcBlock *block) error {
 	for key := range srcBlock.index {
 		_, ok := destBlock.index[key]
 		if !ok {
