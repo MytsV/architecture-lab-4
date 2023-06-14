@@ -8,7 +8,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/roman-mazur/design-practice-2-template/httptools"
@@ -41,28 +41,9 @@ func getTimeout() time.Duration {
 	return time.Duration(*timeoutSec) * time.Second
 }
 
-// SyncBool provides synchronization mechanism for a boolean value
-type SyncBool struct {
-	mu sync.Mutex
-	v  bool
-}
-
-func (c *SyncBool) Set(value bool) {
-	c.mu.Lock()
-	c.v = value
-	c.mu.Unlock()
-}
-
-func (c *SyncBool) Get() bool {
-	c.mu.Lock()
-	res := c.v
-	c.mu.Unlock()
-	return res
-}
-
 type IServer interface {
-	Connections() *Counter
-	Health() *SyncBool
+	Connections() *atomic.Int64
+	Health() *atomic.Bool
 	Forward(rw http.ResponseWriter, r *http.Request) error
 	CheckHealth()
 }
@@ -72,27 +53,8 @@ type Server struct {
 	Url string
 	// We count all connections, except for health checks, made by balancer to the server
 	// Counter manipulation is implemented with locking to prevent data races
-	connections Counter
-	health      SyncBool
-}
-
-// Counter contains a simple integer value. It prevents data races and can be used from several goroutines
-type Counter struct {
-	mu sync.Mutex
-	v  int
-}
-
-func (c *Counter) Add(amount int) {
-	c.mu.Lock()
-	c.v += amount
-	c.mu.Unlock()
-}
-
-func (c *Counter) Get() int {
-	c.mu.Lock()
-	res := c.v
-	c.mu.Unlock()
-	return res
+	connections atomic.Int64
+	health      atomic.Bool
 }
 
 // Forward() processes a request with a server of choice
@@ -128,7 +90,7 @@ func (s *Server) Forward(rw http.ResponseWriter, r *http.Request) error {
 		return nil
 	} else {
 		log.Printf("Failed to get response from %s: %s", s.Url, err)
-		s.Health().Set(false)
+		s.Health().Store(false)
 		rw.WriteHeader(http.StatusServiceUnavailable)
 		return err
 	}
@@ -141,18 +103,18 @@ func (s *Server) CheckHealth() {
 		fmt.Sprintf("%s://%s/health", scheme(), s.Url), nil)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
-		s.Health().Set(false)
+		s.Health().Store(false)
 	} else {
-		s.Health().Set(true)
+		s.Health().Store(true)
 	}
 	cancel()
 }
 
-func (s *Server) Connections() *Counter {
+func (s *Server) Connections() *atomic.Int64 {
 	return &s.connections
 }
 
-func (s *Server) Health() *SyncBool {
+func (s *Server) Health() *atomic.Bool {
 	return &s.health
 }
 
@@ -169,10 +131,10 @@ func (b *Balancer) Balance() *IServer {
 
 	var min *IServer = nil
 	for i := 0; i < len(pool); i++ {
-		if !pool[i].Health().Get() {
+		if !pool[i].Health().Load() {
 			continue
 		}
-		if min == nil || pool[i].Connections().Get() < (*min).Connections().Get() {
+		if min == nil || pool[i].Connections().Load() < (*min).Connections().Load() {
 			min = &pool[i]
 		}
 	}
