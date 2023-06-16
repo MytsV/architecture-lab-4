@@ -24,19 +24,22 @@ func TestReadValue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != "test-value" {
+	if v.value != "test-value" {
 		t.Errorf("Got bad value [%s]", v)
+	}
+	if v.vType != "string" {
+		t.Errorf("Got bad value type [%s]", v)
 	}
 }
 
 func TestReadType(t *testing.T) {
 	e := entry{"key", "int64", "test-value"}
 	data := e.Encode()
-	vt, err := readType(bufio.NewReader(bytes.NewReader(data)))
+	v, err := readValue(bufio.NewReader(bytes.NewReader(data)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if vt != "int64" {
-		t.Errorf("Got bad value type [%s]", vt)
+	if v.vType != "int64" {
+		t.Errorf("Got bad value type [%s]", v)
 	}
 }

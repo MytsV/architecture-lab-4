@@ -99,7 +99,6 @@ func (b *block) recover() error {
 }
 
 func (b *block) close() error {
-	fmt.Printf("I AM CLOSED %s", b.outPath)
 	b.cancel()
 	close(b.writeCh)
 	return b.segment.Close()
@@ -125,20 +124,12 @@ func (b *block) get(key string) (string, string, error) {
 	}
 
 	reader := bufio.NewReader(file)
-	value, err := readValue(reader)
+	pair, err := readValue(reader)
 	if err != nil {
 		return "", "", err
 	}
 
-	_, err = file.Seek(position, 0)
-	if err != nil {
-		return "", "", err
-	}
-	vType, err := readType(reader)
-	if err != nil {
-		return "", "", err
-	}
-	return value, vType, nil
+	return pair.value, pair.vType, nil
 }
 
 func (b *block) put(key, vType, value string) error {
