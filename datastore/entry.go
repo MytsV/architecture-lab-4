@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"strconv"
 )
 
 type entry struct {
@@ -20,17 +21,22 @@ type typeOperator interface {
 
 type stringOperator struct{}
 
-func (s stringOperator) Encode(e *entry) []byte {
+func encodeKey(e *entry, vl int) ([]byte, int) {
 	kl := len(e.key)
-	vl := len(e.value)
 	size := kl + TYPE_SIZE + vl + 12
 	res := make([]byte, size)
 	binary.LittleEndian.PutUint32(res, uint32(size))
 	binary.LittleEndian.PutUint32(res[4:], uint32(kl))
 	copy(res[8:], e.key)
-	res[kl+8] = STRING_TYPE
-	binary.LittleEndian.PutUint32(res[kl+TYPE_SIZE+8:], uint32(vl))
-	copy(res[kl+TYPE_SIZE+12:], e.value)
+	return res, kl + 8
+}
+
+func (s stringOperator) Encode(e *entry) []byte {
+	res, offset := encodeKey(e, len(e.value))
+	vl := len(e.value)
+	res[offset] = STRING_TYPE
+	binary.LittleEndian.PutUint32(res[offset+TYPE_SIZE:], uint32(vl))
+	copy(res[offset+TYPE_SIZE+4:], e.value)
 	return res
 }
 
@@ -65,6 +71,34 @@ func (s stringOperator) Read(in *bufio.Reader) (string, error) {
 	return string(data), nil
 }
 
+type int64Operator struct{}
+
+func (s int64Operator) Encode(e *entry) []byte {
+	res, offset := encodeKey(e, 8)
+	i, err := strconv.ParseInt(e.value, 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	res[offset] = INT64_TYPE
+	binary.LittleEndian.PutUint64(res[offset+TYPE_SIZE:], uint64(i))
+	return res
+}
+
+func (s int64Operator) Decode(input []byte, e *entry) {
+	kl := len(e.key)
+	value := binary.LittleEndian.Uint64(input[kl+TYPE_SIZE+8 : kl+TYPE_SIZE+16])
+	e.value = fmt.Sprintf("%d", int64(value))
+}
+
+func (s int64Operator) Read(in *bufio.Reader) (string, error) {
+	data, err := in.Peek(8)
+	if err != nil {
+		return "", err
+	}
+	value := binary.LittleEndian.Uint64(data)
+	return fmt.Sprintf("%d", int64(value)), nil
+}
+
 var typeToByte map[string]byte = map[string]byte{
 	"string": STRING_TYPE,
 	"int64":  INT64_TYPE,
@@ -84,7 +118,8 @@ func ToType(value byte) string {
 }
 
 var operators map[byte]typeOperator = map[byte]typeOperator{
-	0: stringOperator{},
+	STRING_TYPE: stringOperator{},
+	INT64_TYPE:  int64Operator{},
 }
 
 const (
