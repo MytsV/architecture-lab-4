@@ -4,69 +4,52 @@ import (
 	"bufio"
 	"encoding/binary"
 	"fmt"
+	"strconv"
 )
 
 type entry struct {
 	key   string
-	vType string
+	vType byte
 	value string
 }
 
-func (e *entry) Encode() []byte {
+type typeOperator interface {
+	Encode(*entry) []byte
+	Decode([]byte, *entry)
+	Read(*bufio.Reader) (string, error)
+}
+
+type stringOperator struct{}
+
+func encodeKey(e *entry, vl int) ([]byte, int) {
 	kl := len(e.key)
-	tl := len(e.vType)
-	vl := len(e.value)
-	size := kl + tl + vl + 16
+	size := kl + TYPE_SIZE + vl + 12
 	res := make([]byte, size)
 	binary.LittleEndian.PutUint32(res, uint32(size))
 	binary.LittleEndian.PutUint32(res[4:], uint32(kl))
 	copy(res[8:], e.key)
-	binary.LittleEndian.PutUint32(res[kl+8:], uint32(tl))
-	copy(res[kl+12:], e.vType)
-	binary.LittleEndian.PutUint32(res[kl+tl+12:], uint32(vl))
-	copy(res[kl+tl+16:], e.value)
+	return res, kl + 8
+}
+
+func (s stringOperator) Encode(e *entry) []byte {
+	res, offset := encodeKey(e, len(e.value))
+	vl := len(e.value)
+	res[offset] = STRING_TYPE
+	binary.LittleEndian.PutUint32(res[offset+TYPE_SIZE:], uint32(vl))
+	copy(res[offset+TYPE_SIZE+4:], e.value)
 	return res
 }
 
-func (e *entry) Decode(input []byte) {
-	kl := binary.LittleEndian.Uint32(input[4:])
-	keyBuf := make([]byte, kl)
-	copy(keyBuf, input[8:kl+8])
-	e.key = string(keyBuf)
-
-	tl := binary.LittleEndian.Uint32(input[kl+8:])
-	tValBuf := make([]byte, tl)
-	copy(tValBuf, input[kl+12:kl+12+tl])
-	e.vType = string(tValBuf)
-
-	vl := binary.LittleEndian.Uint32(input[kl+tl+12:])
+func (s stringOperator) Decode(input []byte, e *entry) {
+	kl := len(e.key)
+	vl := binary.LittleEndian.Uint32(input[kl+TYPE_SIZE+8:])
 	valBuf := make([]byte, vl)
-	copy(valBuf, input[kl+tl+16:kl+tl+16+vl])
+	copy(valBuf, input[kl+TYPE_SIZE+12:kl+TYPE_SIZE+12+int(vl)])
 	e.value = string(valBuf)
 }
 
-func readValue(in *bufio.Reader) (string, error) {
-	header, err := in.Peek(8)
-	if err != nil {
-		return "", err
-	}
-	keySize := int(binary.LittleEndian.Uint32(header[4:]))
-	_, err = in.Discard(keySize + 8)
-	if err != nil {
-		return "", err
-	}
-
-	header, err = in.Peek(4)
-	if err != nil {
-		return "", err
-	}
-	vTypeSize := int(binary.LittleEndian.Uint32(header))
-	_, err = in.Discard(vTypeSize + 4)
-	if err != nil {
-		return "", err
-	}
-
-	header, err = in.Peek(4)
+func (s stringOperator) Read(in *bufio.Reader) (string, error) {
+	header, err := in.Peek(4)
 	if err != nil {
 		return "", err
 	}
@@ -88,35 +71,109 @@ func readValue(in *bufio.Reader) (string, error) {
 	return string(data), nil
 }
 
-func readType(in *bufio.Reader) (string, error) {
-	header, err := in.Peek(8)
+type int64Operator struct{}
+
+func (s int64Operator) Encode(e *entry) []byte {
+	res, offset := encodeKey(e, 8)
+	i, err := strconv.ParseInt(e.value, 10, 64)
+	if err != nil {
+		panic(err)
+	}
+	res[offset] = INT64_TYPE
+	binary.LittleEndian.PutUint64(res[offset+TYPE_SIZE:], uint64(i))
+	return res
+}
+
+func (s int64Operator) Decode(input []byte, e *entry) {
+	kl := len(e.key)
+	value := binary.LittleEndian.Uint64(input[kl+TYPE_SIZE+8 : kl+TYPE_SIZE+16])
+	e.value = fmt.Sprintf("%d", int64(value))
+}
+
+func (s int64Operator) Read(in *bufio.Reader) (string, error) {
+	data, err := in.Peek(8)
 	if err != nil {
 		return "", err
+	}
+	value := binary.LittleEndian.Uint64(data)
+	return fmt.Sprintf("%d", int64(value)), nil
+}
+
+var typeToByte map[string]byte = map[string]byte{
+	"string": STRING_TYPE,
+	"int64":  INT64_TYPE,
+}
+
+func ToByte(vType string) byte {
+	return typeToByte[vType]
+}
+
+func ToType(value byte) string {
+	for k, v := range typeToByte {
+		if v == value {
+			return k
+		}
+	}
+	return ""
+}
+
+var operators map[byte]typeOperator = map[byte]typeOperator{
+	STRING_TYPE: stringOperator{},
+	INT64_TYPE:  int64Operator{},
+}
+
+const (
+	TYPE_SIZE        = 1
+	STRING_TYPE byte = 0
+	INT64_TYPE  byte = 1
+)
+
+func (e *entry) Encode() []byte {
+	operator := operators[e.vType]
+	return operator.Encode(e)
+}
+
+func (e *entry) Decode(input []byte) {
+	kl := binary.LittleEndian.Uint32(input[4:])
+	keyBuf := make([]byte, kl)
+	copy(keyBuf, input[8:kl+8])
+	e.key = string(keyBuf)
+
+	typeValue := input[kl+8]
+	operator := operators[typeValue]
+
+	operator.Decode(input, e)
+}
+
+type output struct {
+	vType string
+	value string
+}
+
+func readValue(in *bufio.Reader) (output, error) {
+	header, err := in.Peek(8)
+	if err != nil {
+		return output{}, err
 	}
 	keySize := int(binary.LittleEndian.Uint32(header[4:]))
 	_, err = in.Discard(keySize + 8)
 	if err != nil {
-		return "", err
+		return output{}, err
 	}
 
-	header, err = in.Peek(4)
+	vType, err := in.Peek(1)
 	if err != nil {
-		return "", err
+		return output{}, err
 	}
-	vTypeSize := int(binary.LittleEndian.Uint32(header))
-	_, err = in.Discard(4)
+	_, err = in.Discard(1)
 	if err != nil {
-		return "", err
+		return output{}, err
 	}
 
-	data := make([]byte, vTypeSize)
-	n, err := in.Read(data)
+	operator := operators[vType[0]]
+	data, err := operator.Read(in)
 	if err != nil {
-		return "", err
+		return output{}, err
 	}
-	if n != vTypeSize {
-		return "", fmt.Errorf("can't read value bytes (read %d, expected %d)", n, vTypeSize)
-	}
-
-	return string(data), nil
+	return output{ToType(vType[0]), data}, nil
 }

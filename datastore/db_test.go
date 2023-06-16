@@ -15,7 +15,7 @@ func TestDb_Put(t *testing.T) {
 	}
 	defer os.RemoveAll(dir)
 
-	const outFileSize int64 = 300
+	const outFileSize int64 = 200
 
 	db, err := NewDb(dir)
 	if err != nil {

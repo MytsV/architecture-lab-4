@@ -7,7 +7,7 @@ import (
 )
 
 func TestEntry_Encode(t *testing.T) {
-	e := entry{"key", "string", "value"}
+	e := entry{"key", ToByte("string"), "value"}
 	e.Decode(e.Encode())
 	if e.key != "key" {
 		t.Error("incorrect key")
@@ -18,25 +18,31 @@ func TestEntry_Encode(t *testing.T) {
 }
 
 func TestReadValue(t *testing.T) {
-	e := entry{"key", "string", "test-value"}
+	e := entry{"key", ToByte("string"), "test-value"}
 	data := e.Encode()
 	v, err := readValue(bufio.NewReader(bytes.NewReader(data)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v != "test-value" {
+	if v.value != "test-value" {
 		t.Errorf("Got bad value [%s]", v)
+	}
+	if v.vType != "string" {
+		t.Errorf("Got bad value type [%s]", v)
 	}
 }
 
-func TestReadType(t *testing.T) {
-	e := entry{"key", "int64", "test-value"}
+func TestReadValueInt64(t *testing.T) {
+	e := entry{"key", ToByte("int64"), "-12"}
 	data := e.Encode()
-	vt, err := readType(bufio.NewReader(bytes.NewReader(data)))
+	v, err := readValue(bufio.NewReader(bytes.NewReader(data)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if vt != "int64" {
-		t.Errorf("Got bad value type [%s]", vt)
+	if v.value != e.value {
+		t.Errorf("Got bad value [%s]", v)
+	}
+	if v.vType != "int64" {
+		t.Errorf("Got bad value type [%s]", v)
 	}
 }

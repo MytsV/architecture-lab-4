@@ -23,8 +23,7 @@ type block struct {
 	outOffset int64
 	mu        sync.RWMutex
 
-	writeCh  chan []byte
-	resultCh chan writeResult
+	writeCh chan writeArgument
 
 	cancel context.CancelFunc
 }
@@ -39,9 +38,8 @@ func newBlock(dir string, outFileName string) (*block, error) {
 		index:   make(hashIndex),
 		segment: f,
 
-		outPath:  outputPath,
-		writeCh:  make(chan []byte),
-		resultCh: make(chan writeResult),
+		outPath: outputPath,
+		writeCh: make(chan writeArgument),
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	bl.cancel = cancel
@@ -101,18 +99,15 @@ func (b *block) recover() error {
 }
 
 func (b *block) close() error {
-	fmt.Printf("I AM CLOSED %s", b.outPath)
 	b.cancel()
 	close(b.writeCh)
-	close(b.resultCh)
 	return b.segment.Close()
 }
 
 func (b *block) get(key string) (string, string, error) {
 	b.mu.RLock()
-	defer b.mu.RUnlock()
-
 	position, ok := b.index[key]
+	b.mu.RUnlock()
 	if !ok {
 		return "", "", ErrNotFound
 	}
@@ -129,41 +124,39 @@ func (b *block) get(key string) (string, string, error) {
 	}
 
 	reader := bufio.NewReader(file)
-	value, err := readValue(reader)
+	pair, err := readValue(reader)
 	if err != nil {
 		return "", "", err
 	}
 
-	_, err = file.Seek(position, 0)
-	if err != nil {
-		return "", "", err
-	}
-	vType, err := readType(reader)
-	if err != nil {
-		return "", "", err
-	}
-	return value, vType, nil
+	return pair.value, pair.vType, nil
 }
 
 func (b *block) put(key, vType, value string) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
 	e := entry{
 		key:   key,
-		vType: vType,
+		vType: ToByte(vType),
 		value: value,
 	}
 
-	b.writeCh <- e.Encode()
-	result := <-b.resultCh
+	resultCh := make(chan writeResult)
+	b.writeCh <- writeArgument{resultCh, e.Encode()}
+	result := <-resultCh
+	close(resultCh)
 
 	if result.err == nil {
+		b.mu.Lock()
 		b.index[key] = b.outOffset
 		b.outOffset += int64(result.n)
+		b.mu.Unlock()
 	}
 
 	return result.err
+}
+
+type writeArgument struct {
+	resultCh chan writeResult
+	data     []byte
 }
 
 type writeResult struct {
@@ -176,9 +169,9 @@ func (b *block) write(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case v := <-b.writeCh:
-			n, err := b.segment.Write(v)
-			b.resultCh <- writeResult{n, err}
+		case arg := <-b.writeCh:
+			n, err := b.segment.Write(arg.data)
+			arg.resultCh <- writeResult{n, err}
 		}
 	}
 }
