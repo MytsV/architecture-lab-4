@@ -135,7 +135,7 @@ func (b *block) get(key string) (string, string, error) {
 func (b *block) put(key, vType, value string) error {
 	e := entry{
 		key:   key,
-		vType: vType,
+		vType: ToByte(vType),
 		value: value,
 	}
 
