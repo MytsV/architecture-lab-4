@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,57 +24,57 @@ func TestBalancer_Balance_Table(t *testing.T) {
 		{
 			name: "Chooses first of servers with equal connection count (1)",
 			pool: []IServer{
-				&mockServer{Url: "0", connections: Counter{v: 0}, health: SyncBool{v: true}},
-				&mockServer{Url: "1", connections: Counter{v: 0}, health: SyncBool{v: true}},
-				&mockServer{Url: "2", connections: Counter{v: 0}, health: SyncBool{v: true}},
+				&mockServer{Url: "0", connections: *initConns(0), health: *initHealth(true)},
+				&mockServer{Url: "1", connections: *initConns(0), health: *initHealth(true)},
+				&mockServer{Url: "2", connections: *initConns(0), health: *initHealth(true)},
 			},
 			resultIdx: 0,
 		},
 		{
 			name: "Chooses first of servers with equal connection count (2)",
 			pool: []IServer{
-				&mockServer{Url: "0", connections: Counter{v: 1}, health: SyncBool{v: true}},
-				&mockServer{Url: "1", connections: Counter{v: 1}, health: SyncBool{v: true}},
-				&mockServer{Url: "2", connections: Counter{v: 0}, health: SyncBool{v: true}},
-				&mockServer{Url: "3", connections: Counter{v: 0}, health: SyncBool{v: true}},
+				&mockServer{Url: "0", connections: *initConns(1), health: *initHealth(true)},
+				&mockServer{Url: "1", connections: *initConns(1), health: *initHealth(true)},
+				&mockServer{Url: "2", connections: *initConns(0), health: *initHealth(true)},
+				&mockServer{Url: "3", connections: *initConns(0), health: *initHealth(true)},
 			},
 			resultIdx: 2,
 		},
 		{
 			name: "Finds the correct server in the beginning",
 			pool: []IServer{
-				&mockServer{Url: "0", connections: Counter{v: 0}, health: SyncBool{v: true}},
-				&mockServer{Url: "1", connections: Counter{v: 3}, health: SyncBool{v: true}},
-				&mockServer{Url: "2", connections: Counter{v: 4}, health: SyncBool{v: true}},
+				&mockServer{Url: "0", connections: *initConns(0), health: *initHealth(true)},
+				&mockServer{Url: "1", connections: *initConns(3), health: *initHealth(true)},
+				&mockServer{Url: "2", connections: *initConns(4), health: *initHealth(true)},
 			},
 			resultIdx: 0,
 		},
 		{
 			name: "Finds the correct server in the middle (1)",
 			pool: []IServer{
-				&mockServer{Url: "0", connections: Counter{v: 1}, health: SyncBool{v: true}},
-				&mockServer{Url: "1", connections: Counter{v: 4}, health: SyncBool{v: true}},
-				&mockServer{Url: "2", connections: Counter{v: 6}, health: SyncBool{v: true}},
-				&mockServer{Url: "3", connections: Counter{v: 0}, health: SyncBool{v: true}},
-				&mockServer{Url: "4", connections: Counter{v: 4}, health: SyncBool{v: true}},
+				&mockServer{Url: "0", connections: *initConns(1), health: *initHealth(true)},
+				&mockServer{Url: "1", connections: *initConns(4), health: *initHealth(true)},
+				&mockServer{Url: "2", connections: *initConns(6), health: *initHealth(true)},
+				&mockServer{Url: "3", connections: *initConns(0), health: *initHealth(true)},
+				&mockServer{Url: "4", connections: *initConns(4), health: *initHealth(true)},
 			},
 			resultIdx: 3,
 		},
 		{
 			name: "Finds the correct server in the middle (2)",
 			pool: []IServer{
-				&mockServer{Url: "0", connections: Counter{v: 3}, health: SyncBool{v: true}},
-				&mockServer{Url: "1", connections: Counter{v: 2}, health: SyncBool{v: true}},
-				&mockServer{Url: "2", connections: Counter{v: 4}, health: SyncBool{v: true}},
+				&mockServer{Url: "0", connections: *initConns(3), health: *initHealth(true)},
+				&mockServer{Url: "1", connections: *initConns(2), health: *initHealth(true)},
+				&mockServer{Url: "2", connections: *initConns(4), health: *initHealth(true)},
 			},
 			resultIdx: 1,
 		},
 		{
 			name: "Finds the correct server in the end",
 			pool: []IServer{
-				&mockServer{Url: "0", connections: Counter{v: 3}, health: SyncBool{v: true}},
-				&mockServer{Url: "1", connections: Counter{v: 2}, health: SyncBool{v: true}},
-				&mockServer{Url: "2", connections: Counter{v: 1}, health: SyncBool{v: true}},
+				&mockServer{Url: "0", connections: *initConns(3), health: *initHealth(true)},
+				&mockServer{Url: "1", connections: *initConns(2), health: *initHealth(true)},
+				&mockServer{Url: "2", connections: *initConns(1), health: *initHealth(true)},
 			},
 			resultIdx: 2,
 		},
@@ -85,29 +86,29 @@ func TestBalancer_Balance_Table(t *testing.T) {
 		{
 			name: "Ignores unhealthy servers (1)",
 			pool: []IServer{
-				&mockServer{Url: "0", connections: Counter{v: 0}, health: SyncBool{v: false}},
-				&mockServer{Url: "1", connections: Counter{v: 0}, health: SyncBool{v: true}},
-				&mockServer{Url: "2", connections: Counter{v: 0}, health: SyncBool{v: true}},
+				&mockServer{Url: "0", connections: *initConns(0), health: *initHealth(false)},
+				&mockServer{Url: "1", connections: *initConns(0), health: *initHealth(true)},
+				&mockServer{Url: "2", connections: *initConns(0), health: *initHealth(true)},
 			},
 			resultIdx: 1,
 		},
 		{
 			name: "Ignores unhealthy servers (2)",
 			pool: []IServer{
-				&mockServer{Url: "0", connections: Counter{v: 0}, health: SyncBool{v: false}},
-				&mockServer{Url: "1", connections: Counter{v: 0}, health: SyncBool{v: false}},
-				&mockServer{Url: "2", connections: Counter{v: 0}, health: SyncBool{v: false}},
+				&mockServer{Url: "0", connections: *initConns(0), health: *initHealth(false)},
+				&mockServer{Url: "1", connections: *initConns(0), health: *initHealth(false)},
+				&mockServer{Url: "2", connections: *initConns(0), health: *initHealth(false)},
 			},
 			resultIdx: -1,
 		},
 		{
 			name: "Ignores unhealthy servers (3)",
 			pool: []IServer{
-				&mockServer{Url: "0", connections: Counter{v: 1}, health: SyncBool{v: false}},
-				&mockServer{Url: "1", connections: Counter{v: 0}, health: SyncBool{v: false}},
-				&mockServer{Url: "2", connections: Counter{v: 10}, health: SyncBool{v: true}},
-				&mockServer{Url: "3", connections: Counter{v: 9}, health: SyncBool{v: true}},
-				&mockServer{Url: "4", connections: Counter{v: 2}, health: SyncBool{v: false}},
+				&mockServer{Url: "0", connections: *initConns(1), health: *initHealth(false)},
+				&mockServer{Url: "1", connections: *initConns(0), health: *initHealth(false)},
+				&mockServer{Url: "2", connections: *initConns(10), health: *initHealth(true)},
+				&mockServer{Url: "3", connections: *initConns(9), health: *initHealth(true)},
+				&mockServer{Url: "4", connections: *initConns(2), health: *initHealth(false)},
 			},
 			resultIdx: 3,
 		},
@@ -146,8 +147,8 @@ func TestBalancer_Balance_Random(t *testing.T) {
 			}
 			pool = append(pool, &mockServer{
 				Url:         strconv.Itoa(j),
-				connections: Counter{v: conn},
-				health:      SyncBool{v: true},
+				connections: *initConns(int64(conn)),
+				health:      *initHealth(true),
 			})
 		}
 		balancer := Balancer{ServersPool: pool}
@@ -165,9 +166,9 @@ If multiple requests come synchronously, only the first server will receive them
 */
 func TestBalancer_Handle_Sync(t *testing.T) {
 	balancer := Balancer{ServersPool: []IServer{
-		&mockServer{Url: "0", health: SyncBool{v: true}},
-		&mockServer{Url: "1", health: SyncBool{v: true}},
-		&mockServer{Url: "2", health: SyncBool{v: true}},
+		&mockServer{Url: "0", health: *initHealth(true)},
+		&mockServer{Url: "1", health: *initHealth(true)},
+		&mockServer{Url: "2", health: *initHealth(true)},
 	}}
 
 	r := httptest.NewRequest("GET", "/", nil)
@@ -187,9 +188,9 @@ func TestBalancer_Handle_Delay(t *testing.T) {
 	var wg sync.WaitGroup
 
 	balancer := Balancer{ServersPool: []IServer{
-		&mockServer{Url: "0", health: SyncBool{v: true}, delay: 5},
-		&mockServer{Url: "1", health: SyncBool{v: true}, delay: 5},
-		&mockServer{Url: "2", health: SyncBool{v: true}, delay: 5},
+		&mockServer{Url: "0", health: *initHealth(true), delay: 5},
+		&mockServer{Url: "1", health: *initHealth(true), delay: 5},
+		&mockServer{Url: "2", health: *initHealth(true), delay: 5},
 	}}
 
 	wg.Add(3)
@@ -217,18 +218,18 @@ func TestBalancer_Handle_Delay(t *testing.T) {
 // Tests if HealthService runs checks in the beginning and correctly identifies faulty servers
 func TestBalancer_HealthService_Start(t *testing.T) {
 	balancer := Balancer{ServersPool: []IServer{
-		&mockServer{Url: "0", health: SyncBool{v: true}},
-		&mockServer{Url: "1", health: SyncBool{v: true}, failing: true},
-		&mockServer{Url: "2", health: SyncBool{v: true}},
+		&mockServer{Url: "0", health: *initHealth(true)},
+		&mockServer{Url: "1", health: *initHealth(true), failing: true},
+		&mockServer{Url: "2", health: *initHealth(true)},
 	}}
 	balancer.StartHealthService()
-	assert.False(t, balancer.ServersPool[1].Health().Get())
+	assert.False(t, balancer.ServersPool[1].Health().Load())
 }
 
 type mockServer struct {
 	Url         string
-	connections Counter
-	health      SyncBool
+	connections atomic.Int64
+	health      atomic.Bool
 	delay       int
 	failing     bool
 }
@@ -246,16 +247,28 @@ func (s *mockServer) Forward(rw http.ResponseWriter, r *http.Request) error {
 
 func (s *mockServer) CheckHealth() {
 	if s.failing {
-		s.health.Set(false)
+		s.health.Store(false)
 	}
 }
 
-func (s *mockServer) Connections() *Counter {
+func (s *mockServer) Connections() *atomic.Int64 {
 	return &s.connections
 }
 
-func (s *mockServer) Health() *SyncBool {
+func (s *mockServer) Health() *atomic.Bool {
 	return &s.health
+}
+
+func initConns(n int64) *atomic.Int64 {
+	connections := atomic.Int64{}
+	connections.Add(n)
+	return &connections
+}
+
+func initHealth(value bool) *atomic.Bool {
+	health := atomic.Bool{}
+	health.Store(value)
+	return &health
 }
 
 type mockResponseWriter struct {
